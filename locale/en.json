@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "title": "Infinite canvas",
+    "description": "An endless node board for AI images. Add a card, type a prompt and press Generate for text-to-image; pull a line from any image card onto a generation card to feed it in as a reference for image-to-image. Upload by button, drag-and-drop or Ctrl+V, preview full size, crop with ratio presets, and let every change autosave. Generation goes through your own OpenAI-compatible endpoint, configured under Settings in the board's toolbar; the API key stays on this machine and never enters the board file. Find the board from the canvas icon in the sidebar's panel column. Video generation is not included.",
+    "detail": "docs/DETAIL.md"
+  },
+  "panel": {
+    "title": "Infinite canvas"
+  }
+}

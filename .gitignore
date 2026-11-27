@@ -1,0 +1,13 @@
+# npm pack output
+*.tgz
+
+# board data and local secrets never belong in the repo
+data/
+*.log
+
+# editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+node_modules/
