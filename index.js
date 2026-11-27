@@ -716,8 +716,18 @@ async function readAsset(dataDir, id) {
   }
 }
 
-/** Delete assets the canvas no longer references once they have aged out. */
+/**
+ * Delete assets the canvas no longer references once they have aged out.
+ *
+ * Off by default. Generated pictures are the user's output, and a card can be
+ * deleted by a stray click: treating "no node points at it" as "throw it away"
+ * silently destroyed work that had already been paid for. The store is a
+ * library the board draws from, pruned only when the user asks for it.
+ */
+const ASSET_PRUNE_ENABLED = process.env.DSH_IMAGE_CANVAS_PRUNE === '1'
+
 async function pruneAssets(dataDir, keepIds) {
+  if (!ASSET_PRUNE_ENABLED) return 0
   // An empty reference set means the board lost its content — a fresh document,
   // a load failure on the page, or a save from a client that never loaded. The
   // age check below saves most of it, but a bulk delete is not worth the risk:
@@ -967,13 +977,32 @@ export function apply(ctx) {
     const timer = setTimeout(() => controller.abort(), GENERATE_TIMEOUT_MS)
     let payload
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${key}`, 'content-type': contentType },
-        body,
-        signal: controller.signal,
-      })
-      const text = await response.text()
+      /**
+       * Ask the provider, retrying the transient failures once.
+       *
+       * The proxy answers 502 "upstream provider could not be reached" when its
+       * own backend is momentarily unavailable — measured on this endpoint, the
+       * same request succeeded on retry. Only that class is retried: a 4xx means
+       * the request itself is wrong and repeating it would just fail again.
+       */
+      const attempt = async () => {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${key}`, 'content-type': contentType },
+          body,
+          signal: controller.signal,
+        })
+        return { response, text: await response.text() }
+      }
+
+      let outcome = await attempt()
+      const isTransient = (status) => status === 502 || status === 503 || status === 504
+      if (isTransient(outcome.response.status)) {
+        // One short pause: the upstream pool is being re-selected, not rebuilt.
+        await new Promise((resolve) => setTimeout(resolve, 2500))
+        outcome = await attempt()
+      }
+      const { response, text } = outcome
       if (!response.ok) {
         const error = new Error(`上游返回 HTTP ${String(response.status)}：${text.slice(0, 400)}`)
         error.status = 502
@@ -1085,6 +1114,68 @@ export function apply(ctx) {
             if (route === '/update-check' && method === 'GET') {
               const force = url.searchParams.get('force') === '1'
               sendJson(response, 200, await checkForUpdate(force))
+              return
+            }
+
+            if (route === '/assets' && method === 'GET') {
+              /**
+               * Every asset on disk, newest first.
+               *
+               * The board only knows assets its nodes still reference, so
+               * deleting a card used to make its generated history unreachable
+               * and then, after the grace period, deleted for good. Listing the
+               * store itself gives the user a way back to those pictures.
+               */
+              let names = []
+              try {
+                names = await readdir(assetDir(dataDir))
+              } catch {
+                names = []
+              }
+              const assets = []
+              for (const name of names) {
+                // Same shape readAsset accepts, so a listed entry is always
+                // fetchable: the store keeps png, jpg, webp and gif.
+                if (!/^[0-9a-f]{32}\.(png|jpg|webp|gif)$/u.test(name)) continue
+                try {
+                  const info = await stat(join(assetDir(dataDir), name))
+                  assets.push({
+                    id: name,
+                    bytes: info.size,
+                    at: info.mtimeMs,
+                    url: `${PREFIX}/assets/${name}`,
+                  })
+                } catch {
+                  // A file removed between readdir and stat is simply skipped.
+                }
+              }
+              assets.sort((a, b) => b.at - a.at)
+              sendJson(response, 200, { assets, total: assets.length })
+              return
+            }
+
+            if (route === '/assets/delete' && method === 'POST') {
+              /**
+               * Remove stored pictures the user explicitly selected.
+               *
+               * This is the only path that deletes an asset. The board's own save
+               * no longer prunes anything, so nothing disappears without a
+               * deliberate request carrying the ids.
+               */
+              const body = await readJsonBody(request, 256 * 1024)
+              const ids = Array.isArray(body?.ids) ? body.ids : []
+              let removed = 0
+              for (const id of ids) {
+                if (typeof id !== 'string') continue
+                if (!/^[0-9a-f]{32}\.(png|jpg|webp|gif)$/u.test(id)) continue
+                try {
+                  await unlink(join(assetDir(dataDir), id))
+                  removed += 1
+                } catch {
+                  // Already gone, or held open; either way the next listing tells the truth.
+                }
+              }
+              sendJson(response, 200, { ok: true, removed })
               return
             }
 

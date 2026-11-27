@@ -90,7 +90,16 @@ window.__ModuleLoader__.load({
         'label.count': '张数',
         'label.model': '模型',
         'label.noModel': '未配置模型',
-        'crash.title': '这块内容出错了',
+        'library.title': '素材库',
+        'library.empty': '还没有任何图片。生成或上传后，这里会一直保留。',
+        'library.hint': '双击缩略图可直接放回画布。删除节点不会删掉这里的图片。',
+        'library.insert': '放回画布',
+        'library.picked': '已选',
+        'library.saveBatch': '批量保存',
+        'library.savedBatch': '已保存',
+        'library.delete': '删除',
+        'library.deleted': '已删除',
+        'library.deleteFailed': '删除失败',        'crash.title': '这块内容出错了',
         'crash.reset': '重试',
         'label.size': '尺寸',
         'label.references': '参考图',
@@ -210,7 +219,16 @@ window.__ModuleLoader__.load({
         'label.count': 'Count',
         'label.model': 'Model',
         'label.noModel': 'No model',
-        'crash.title': 'This part failed to render',
+        'library.title': 'Library',
+        'library.empty': 'No pictures yet. Anything you generate or upload is kept here.',
+        'library.hint': 'Double-click a thumbnail to put it back on the board. Deleting a card never removes a picture here.',
+        'library.insert': 'Put on board',
+        'library.picked': 'selected',
+        'library.saveBatch': 'Save all',
+        'library.savedBatch': 'Saved',
+        'library.delete': 'Delete',
+        'library.deleted': 'Deleted',
+        'library.deleteFailed': 'Delete failed',        'crash.title': 'This part failed to render',
         'crash.reset': 'Try again',
         'label.size': 'Size',
         'label.references': 'References',
@@ -311,9 +329,10 @@ window.__ModuleLoader__.load({
 
     const MIN_ZOOM = 0.08
     const MAX_ZOOM = 4
-    const NODE_MIN_WIDTH = 240
+    const NODE_MIN_WIDTH = 260
     const NODE_MAX_WIDTH = 720
-    const IMAGE_WIDTH = 340
+    /** Wide enough for the model picker (name + price) on one row with ratio. */
+    const IMAGE_WIDTH = 420
     const TEXT_WIDTH = 280
     const UPLOAD_MAX_BYTES = 24 * 1024 * 1024
     const HEAD_HEIGHT = 30
@@ -327,8 +346,37 @@ window.__ModuleLoader__.load({
       return `${API}/assets/${id}`
     }
 
-    async function requestJson(path, options) {
-      const response = await fetch(`${API}${path}`, options)
+    /**
+     * Send a JSON request and parse the answer.
+     *
+     * `timeoutMs` is set by the caller: generation can legitimately take minutes
+     * (a slow model returned a picture after 84s in testing), and the browser's
+     * own fetch has no timeout of its own. Without an explicit budget a long
+     * generation surfaced as the opaque "fetch failed" instead of a real error.
+     */
+    async function requestJson(path, options, timeoutMs) {
+      let signal
+      let timer
+      if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+        const controller = new AbortController()
+        signal = controller.signal
+        timer = setTimeout(() => controller.abort(), timeoutMs)
+      }
+      let response
+      try {
+        response = await fetch(`${API}${path}`, signal === undefined ? options : { ...options, signal })
+      } catch (caught) {
+        clearTimeout(timer)
+        // Undici/Browser both report a dropped connection as "fetch failed",
+        // which says nothing about what to do. Name the likely causes instead.
+        // Deliberately not routed through `t`: requestJson is defined outside the
+        // panel and has no locale binding in scope.
+        const reason = caught instanceof Error ? caught.message : String(caught)
+        throw new Error(
+          `无法连接到本地服务（${reason}）—— 常见原因：生成排队过久被中断、上游超时或本机网络断开。可换个模型或稍后重试。`,
+        )
+      }
+      clearTimeout(timer)
       const text = await response.text()
       let payload
       try {
@@ -455,9 +503,11 @@ window.__ModuleLoader__.load({
 .icv-prompt-wrap{position:relative;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .icv-prompt-expand{position:absolute;top:6px;right:6px;width:22px;height:22px;border:0;border-radius:5px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
 .icv-prompt-expand:hover{color:var(--dsw-alias-brand-primary)}
-.icv-controls{display:flex;align-items:center;gap:5px;padding:7px 9px;flex-wrap:nowrap;border-bottom:1px solid var(--dsw-alias-border-l1);overflow:hidden}
+.icv-controls{display:flex;align-items:center;gap:5px;padding:7px 9px;flex-wrap:wrap;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .icv-select{height:26px;padding:0 4px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;max-width:120px;min-width:0}
-.icv-select-model{max-width:190px}
+.icv-select-model{max-width:230px}
+.icv-controls-label{flex:none;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.icv-busy-elapsed{font-size:11px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
 .icv-node-foot{display:flex;align-items:center;gap:4px;padding:7px 9px;flex-wrap:wrap}
 .icv-refs{display:flex;align-items:center;gap:4px;padding:0 9px 7px;flex-wrap:wrap}
 .icv-ref{position:relative;width:34px;height:34px;border-radius:6px;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
@@ -497,6 +547,21 @@ window.__ModuleLoader__.load({
 .icv-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:24px;pointer-events:none}
 .icv-empty h3{margin:0;font-size:15px}
 .icv-empty p{margin:0;max-width:440px;font-size:12px;line-height:1.75;color:var(--dsw-alias-label-secondary)}
+.icv-lib{width:min(880px,94vw);max-height:86vh;display:flex;flex-direction:column}
+.icv-lib-body{flex:1;min-height:0;overflow:auto;padding:12px}
+.icv-lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
+.icv-lib-item{padding:0;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden;background:var(--dsw-alias-bg-layer-2);cursor:pointer;aspect-ratio:1}
+.icv-lib-item img{width:100%;height:100%;object-fit:cover;display:block}
+.icv-lib-item[data-active="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px var(--dsw-alias-brand-primary)}
+.icv-lib-item{position:relative;outline-offset:-2px}
+.icv-lib-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary)}
+.icv-lib-menu{position:fixed;z-index:120;min-width:170px;padding:4px;border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 10px 30px rgba(0,0,0,.22);display:flex;flex-direction:column;gap:1px}
+.icv-lib-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.icv-lib-menu-item:hover{background:var(--dsw-alias-bg-layer-2)}
+.icv-lib-menu-danger{color:var(--dsw-alias-state-error-primary)}
+.icv-lib-note{padding:24px 8px;text-align:center;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.icv-lib-error{color:var(--dsw-alias-state-error-primary)}
+.icv-lib-hint{font-size:11px;color:var(--dsw-alias-label-secondary)}
 .icv-overlay{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.62)}
 .icv-modal{display:flex;flex-direction:column;max-width:min(1040px,94vw);max-height:92vh;border-radius:12px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);box-shadow:0 18px 60px rgba(0,0,0,.45);overflow:hidden}
 .icv-modal-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:13px;font-weight:600;flex:none}
@@ -707,6 +772,293 @@ window.__ModuleLoader__.load({
      * cursor stays under the cursor. Once zoomed in, dragging pans the picture,
      * and a double click fits it back to the window.
      */
+    function AssetLibrary({ t, onClose, onInsert, onPreview, onNotice }) {
+      const [assets, setAssets] = useState(null)
+      const [error, setError] = useState('')
+      /** Ids of the pictures currently selected; empty means nothing is picked. */
+      const [picked, setPicked] = useState([])
+      /** Right-click menu: { x, y, id } for the picture it targets. */
+      const [menu, setMenu] = useState(null)
+      const [deleting, setDeleting] = useState(false)
+
+      const load = useCallback(async () => {
+        try {
+          const answer = await requestJson('/assets', { method: 'GET' }, 20_000)
+          setAssets(Array.isArray(answer?.assets) ? answer.assets : [])
+          setError('')
+        } catch (caught) {
+          setError(errText(caught))
+        }
+      }, [])
+
+      useEffect(() => {
+        void load()
+      }, [load])
+
+      /* Escape closes the menu first, then the dialog. */
+      useEffect(() => {
+        const onKey = (event) => {
+          if (event.key !== 'Escape') return
+          event.stopPropagation()
+          if (menu !== null) {
+            setMenu(null)
+            return
+          }
+          onClose()
+        }
+        window.addEventListener('keydown', onKey, true)
+        return () => window.removeEventListener('keydown', onKey, true)
+      }, [menu, onClose])
+
+      /* A click anywhere else dismisses the context menu. */
+      useEffect(() => {
+        if (menu === null) return undefined
+        const dismiss = () => setMenu(null)
+        window.addEventListener('pointerdown', dismiss, true)
+        return () => window.removeEventListener('pointerdown', dismiss, true)
+      }, [menu])
+
+      const formatDate = (ms) => {
+        try {
+          return new Date(ms).toLocaleString()
+        } catch {
+          return ''
+        }
+      }
+
+
+      /**
+       * Toggle one picture in the selection.
+       *
+       * Shift extends the range from the last anchor, which is what a grid of
+       * thumbnails is usually expected to do; Ctrl/Cmd toggles a single item.
+       */
+      const toggle = (event, id, index) => {
+        if (event.shiftKey && picked.length > 0) {
+          const anchor = assets.findIndex((entry) => entry.id === picked[picked.length - 1])
+          const from = Math.min(anchor, index)
+          const to = Math.max(anchor, index)
+          const range = (assets ?? []).slice(from, to + 1).map((entry) => entry.id)
+          setPicked((current) => Array.from(new Set([...current, ...range])))
+          return
+        }
+        const plain = !event.ctrlKey && !event.metaKey
+        setPicked((current) => {
+          if (plain && current.length === 1 && current[0] === id) return []
+          if (plain) return [id]
+          return current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]
+        })
+      }
+
+      const selectedAssets = () => (assets ?? []).filter((entry) => picked.includes(entry.id))
+
+      /**
+       * Save the selection.
+       *
+       * Each file is fetched and saved separately; browsers throttle a burst of
+       * downloads, so they are spaced by a short delay rather than fired at once.
+       */
+      const downloadSelected = async (list) => {
+        const targets = list ?? selectedAssets()
+        for (let index = 0; index < targets.length; index += 1) {
+          downloadAsset(targets[index].id)
+          if (index < targets.length - 1) await new Promise((resolve) => setTimeout(resolve, 350))
+        }
+        onNotice?.(`${t('library.savedBatch')} ${String(targets.length)}`)
+      }
+
+      /* Delete with an explicit id list, so the menu can act on one picture
+         without first having to change what "selected" means. */
+      const deleteSelectedWith = async (ids) => {
+        setDeleting(true)
+        try {
+          const answer = await requestJson('/assets/delete', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids }),
+          }, 60_000)
+          setPicked([])
+          await load()
+          onNotice?.(`${t('library.deleted')} ${String(answer?.removed ?? ids.length)}`)
+        } catch (caught) {
+          onNotice?.(`${t('library.deleteFailed')}：${errText(caught)}`)
+        } finally {
+          setDeleting(false)
+        }
+      }
+
+      const deleteSelected = () => {
+        if (picked.length === 0) return Promise.resolve()
+        return deleteSelectedWith(picked)
+      }
+
+      const menuItems = (asset) => {
+        const one = [asset]
+        return [
+          {
+            key: 'preview',
+            label: t('action.preview'),
+            icon: 'image',
+            run: () => onPreview(asset),
+          },
+          {
+            key: 'download',
+            label: t('action.download'),
+            icon: 'save',
+            run: () => void downloadSelected(one),
+          },
+          {
+            key: 'copy',
+            label: t('action.copy'),
+            icon: 'copy',
+            run: () => {
+              void copyAssetImage(asset.id).then((outcome) =>
+                onNotice?.(outcome === 'copied' ? t('notice.copied') : t('notice.copyFailed')),
+              )
+            },
+          },
+          {
+            key: 'copyLink',
+            label: t('action.copyLink'),
+            icon: 'link',
+            run: () => {
+              void copyAssetAddress(asset.id).then((ok) =>
+                onNotice?.(ok ? t('notice.copied') : t('notice.copyFailed')),
+              )
+            },
+          },
+          {
+            key: 'insert',
+            label: t('library.insert'),
+            icon: 'plus',
+            run: () => {
+              onInsert(asset)
+              onClose()
+            },
+          },
+          {
+            key: 'delete',
+            label: t('action.delete'),
+            icon: 'trash',
+            danger: true,
+            run: () => {
+              setPicked([asset.id])
+              void deleteSelectedWith([asset.id])
+            },
+          },
+        ]
+      }
+
+      const body =
+        error !== ''
+          ? h('div', { className: 'icv-lib-note icv-lib-error' }, error)
+          : assets === null
+            ? h('div', { className: 'icv-lib-note' }, t('status.loading'))
+            : assets.length === 0
+              ? h('div', { className: 'icv-lib-note' }, t('library.empty'))
+              : h(
+                  'div',
+                  { className: 'icv-lib-grid' },
+                  ...assets.map((asset, index) =>
+                    h(
+                      'div',
+                      {
+                        key: asset.id,
+                        className: 'icv-lib-item',
+                        'data-active': picked.includes(asset.id) ? 'true' : 'false',
+                        title: `${formatDate(asset.at)} · ${String(Math.round(asset.bytes / 1024))} KB`,
+                        role: 'option',
+                        tabIndex: 0,
+                        'aria-selected': picked.includes(asset.id) ? 'true' : 'false',
+                        onClick: (event) => toggle(event, asset.id, index),
+                        onDoubleClick: () => onPreview(asset),
+                        onContextMenu: (event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          // Keep the menu inside the window.
+                          setMenu({
+                            id: asset.id,
+                            x: Math.min(event.clientX, window.innerWidth - 200),
+                            y: Math.min(event.clientY, window.innerHeight - 220),
+                          })
+                        },
+                      },
+                      h('img', { src: asset.url, alt: '', draggable: false, loading: 'lazy' }),
+                    ),
+                  ),
+                )
+
+      const target = menu === null ? undefined : (assets ?? []).find((entry) => entry.id === menu.id)
+
+      return h(
+        'div',
+        { className: 'icv-overlay', role: 'dialog', 'aria-modal': true, 'aria-label': t('library.title') },
+        h(
+          'div',
+          { className: 'icv-modal icv-lib' },
+          h(
+            'div',
+            { className: 'icv-modal-head' },
+            h(Icon, { name: 'image' }),
+            h('span', null, t('library.title')),
+            assets === null ? null : h('span', { className: 'icv-chip' }, `${String(assets.length)}`),
+            picked.length === 0 ? null : h('span', { className: 'icv-chip icv-chip-ok' }, `${t('library.picked')} ${String(picked.length)}`),
+            h('div', { className: 'icv-spacer' }),
+            h(IconButton, { name: 'close', title: t('action.close'), onClick: onClose }),
+          ),
+          h('div', { className: 'icv-lib-body' }, body),
+          h(
+            'div',
+            { className: 'icv-modal-foot' },
+            h('span', { className: 'icv-lib-hint' }, t('library.hint')),
+            h('div', { className: 'icv-spacer' }),
+            h(Button, { ghost: true, disabled: picked.length === 0 || deleting, onClick: () => void downloadSelected() }, t('library.saveBatch')),
+            h(Button, { ghost: true, danger: true, disabled: picked.length === 0 || deleting, onClick: () => void deleteSelected() }, t('library.delete')),
+            h(Button, { ghost: true, disabled: picked.length !== 1, onClick: () => {
+              const asset = (assets ?? []).find((entry) => entry.id === picked[0])
+              if (asset !== undefined) onPreview(asset)
+            } }, t('action.preview')),
+            h(
+              Button,
+              {
+                primary: true,
+                disabled: picked.length !== 1,
+                onClick: () => {
+                  const asset = (assets ?? []).find((entry) => entry.id === picked[0])
+                  if (asset !== undefined) {
+                    onInsert(asset)
+                    onClose()
+                  }
+                },
+              },
+              t('library.insert'),
+            ),
+          ),
+        ),
+        menu === null || target === undefined
+          ? null
+          : h(
+              'div',
+              { className: 'icv-lib-menu', style: { left: `${String(menu.x)}px`, top: `${String(menu.y)}px` }, onPointerDown: (event) => event.stopPropagation() },
+              ...menuItems(target).map((item) =>
+                h(
+                  'button',
+                  {
+                    key: item.key,
+                    type: 'button',
+                    className: `icv-lib-menu-item${item.danger === true ? ' icv-lib-menu-danger' : ''}`,
+                    onClick: () => {
+                      setMenu(null)
+                      item.run()
+                    },
+                  },
+                  h(Icon, { name: item.icon, size: 13 }),
+                  h('span', null, item.label),
+                ),
+              ),
+            ),
+      )
+    }
     function Lightbox({ node, t, onClose, onCrop, onUseAsReference }) {
       const src = assetUrl(node.assetId)
       const viewportRef = useRef(null)
@@ -1355,6 +1707,49 @@ window.__ModuleLoader__.load({
     }
 
     /* ------------------------------------------------------------------ *
+     * Asset actions
+     * ------------------------------------------------------------------ */
+
+    /** Trigger a browser download for one stored asset. */
+    function downloadAsset(assetId) {
+      const anchor = document.createElement('a')
+      anchor.href = assetUrl(assetId)
+      anchor.download = assetId
+      anchor.click()
+    }
+
+    /**
+     * Copy one stored picture to the clipboard, falling back to a download.
+     *
+     * Clipboard image writes need a secure context and user permission, so a
+     * refusal downloads instead of silently doing nothing. Returns which one
+     * happened, so the caller can say so.
+     */
+    async function copyAssetImage(assetId) {
+      const source = assetUrl(assetId)
+      try {
+        const response = await fetch(source)
+        const blob = await response.blob()
+        const png = blob.type === 'image/png' ? blob : await convertToPng(blob)
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+        return 'copied'
+      } catch {
+        downloadAsset(assetId)
+        return 'downloaded'
+      }
+    }
+
+    /** Copy the absolute URL of one stored asset. */
+    async function copyAssetAddress(assetId) {
+      try {
+        await navigator.clipboard.writeText(new URL(assetUrl(assetId), window.location.origin).toString())
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    /* ------------------------------------------------------------------ *
      * Image context menu
      * ------------------------------------------------------------------ */
 
@@ -1749,7 +2144,7 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'icv-controls' },
           h('span', { className: 'icv-node-dot', style: { background: 'var(--dsw-alias-label-secondary)' } }),
-          h('span', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, t('label.model')),
+          h('span', { className: 'icv-controls-label' }, t('label.model')),
           /**
            * Model picker.
            *
@@ -1932,6 +2327,11 @@ window.__ModuleLoader__.load({
       const isText = node.kind === 'text'
       const width = node.baseWidth ?? (isText ? TEXT_WIDTH : IMAGE_WIDTH)
       const busy = node.status === 'busy'
+      /**
+       * How long this card has been generating, in whole seconds. The timer only
+       * runs while the card is busy, so idle cards schedule nothing.
+       */
+      const elapsedSeconds = useElapsedSeconds(busy)
       const hasImage = typeof node.assetId === 'string' && node.assetId !== ''
       /** A pure material node: an uploaded or dropped picture with no prompt. */
       const isAsset = isText ? false : node.kind === 'asset'
@@ -2172,7 +2572,20 @@ window.__ModuleLoader__.load({
               title: hasImage ? t('action.preview') : t('prompt.placeholder'),
             },
             busy
-              ? h('div', { className: 'icv-busy' }, h('span', { className: 'icv-spin' }), h('span', null, t('status.generating')))
+              ? h(
+                  'div',
+                  { className: 'icv-busy' },
+                  h('span', { className: 'icv-spin' }),
+                  h('span', null, t('status.generating')),
+                  /**
+                   * Elapsed seconds.
+                   *
+                   * A slow model can take over a minute (measured: 75s for a
+                   * mid-tier one). Without a moving number the card looks frozen
+                   * and the user cancels a request that was going to succeed.
+                   */
+                  h('span', { className: 'icv-busy-elapsed' }, `${String(elapsedSeconds)}s`),
+                )
               : hasImage
                 ? h('img', {
                     className: 'icv-thumb',
@@ -2323,6 +2736,31 @@ window.__ModuleLoader__.load({
 
 
     /* ------------------------------------------------------------------ *
+     * Timing
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Whole seconds since `active` became true, reset each time it turns on.
+     *
+     * Returns 0 while inactive. A one-second tick is enough for a progress hint
+     * and cheap; the interval is cleared as soon as the work ends.
+     */
+    function useElapsedSeconds(active) {
+      const [seconds, setSeconds] = useState(0)
+      useEffect(() => {
+        if (!active) {
+          setSeconds(0)
+          return undefined
+        }
+        const startedAt = Date.now()
+        setSeconds(0)
+        const timer = setInterval(() => setSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000)
+        return () => clearInterval(timer)
+      }, [active])
+      return seconds
+    }
+
+    /* ------------------------------------------------------------------ *
      * Crash guard
      * ------------------------------------------------------------------ */
 
@@ -2395,6 +2833,8 @@ window.__ModuleLoader__.load({
       const [addMenu, setAddMenu] = useState(null)
       const [imageMenu, setImageMenu] = useState(null)
       const [settingsOpen, setSettingsOpen] = useState(false)
+      /** The asset library: pictures that outlive the card that made them. */
+      const [libraryOpen, setLibraryOpen] = useState(false)
       const [pendingDelete, setPendingDelete] = useState(null)
       const [panning, setPanning] = useState(false)
       const [link, setLink] = useState(null)
@@ -2423,7 +2863,7 @@ window.__ModuleLoader__.load({
       const uploadOrigin = useRef(null)
 
       const modalOpen =
-        preview !== null || cropTarget !== null || expandedNode !== null || settingsOpen || pendingDelete !== null || imageMenu !== null
+        preview !== null || cropTarget !== null || expandedNode !== null || settingsOpen || libraryOpen || pendingDelete !== null || imageMenu !== null
 
       /**
        * The document as it should be stored.
@@ -2894,17 +3334,23 @@ window.__ModuleLoader__.load({
           const prompt = [own, ...contextNotes].filter((part) => part !== '').join('\n\n')
           patchNode(nodeId, { status: 'busy', error: '' })
           try {
-            const payload = await requestJson('/generate', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                prompt,
-                model: node.model ?? '',
-                size: node.size ?? '',
-                n: node.count ?? 1,
-                references,
-              }),
-            })
+            const payload = await requestJson(
+              '/generate',
+              {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  prompt,
+                  model: node.model ?? '',
+                  size: node.size ?? '',
+                  n: node.count ?? 1,
+                  references,
+                }),
+              },
+              // Host aborts upstream at 300s; wait a little longer so its own
+              // timeout error reaches the user instead of this side giving up first.
+              330_000,
+            )
             const images = Array.isArray(payload.images) ? payload.images : []
             const first = images[0]
             if (first === undefined) throw new Error(t('error.generate'))
@@ -3002,6 +3448,41 @@ window.__ModuleLoader__.load({
           return node
         },
         [addNode],
+      )
+
+      /**
+       * Put a stored picture back on the board as a new card.
+       *
+       * Used by the asset library: the picture already exists in the store, so
+       * this only adds a node pointing at it — nothing is downloaded or
+       * re-encoded.
+       */
+      const insertLibraryAsset = useCallback(
+        (asset) => {
+          // Land it where the viewport is pointing, like a new card.
+          const point = toWorldFromCentre()
+          const node = {
+            id: newId('img'),
+            kind: 'asset',
+            x: Math.round(point.x),
+            y: Math.round(point.y),
+            baseWidth: IMAGE_WIDTH,
+            assetId: asset.id,
+            history: [asset.id],
+            width: 0,
+            height: 0,
+            status: 'ready',
+            prompt: '',
+          }
+          addNode(node)
+          setSelected(node.id)
+          void measureAsset(asset.id).then((size) => {
+            if (size.width > 0 && size.height > 0) {
+              patchNode(node.id, { width: size.width, height: size.height })
+            }
+          })
+        },
+        [addNode, patchNode, toWorldFromCentre],
       )
 
       /** Reference candidates for the @ picker: every other node holding an image or prose. */
@@ -3371,6 +3852,7 @@ window.__ModuleLoader__.load({
           h(Button, { icon: 'save', onClick: saveNow, disabled: !loadedOk.current }, t('action.save')),
           h(Button, { icon: 'export', onClick: exportBoard }, t('action.export')),
           h(Button, { icon: 'import', onClick: () => importRef.current?.click() }, t('action.import')),
+            h(Button, { icon: 'history', onClick: () => setLibraryOpen(true) }, t('library.title')),
           h('input', {
             ref: importRef,
             type: 'file',
@@ -3654,6 +4136,19 @@ window.__ModuleLoader__.load({
                 await applyCrop(blob, cropTarget)
               },
             }),
+        libraryOpen
+          ? h(
+              CrashGuard,
+              { t, onReset: () => setLibraryOpen(false) },
+              h(AssetLibrary, {
+                t,
+                onClose: () => setLibraryOpen(false),
+                onInsert: insertLibraryAsset,
+                onPreview: (asset) => setPreview({ id: asset.id, assetId: asset.id }),
+                onNotice: (message) => setNotice(message),
+              }),
+            )
+          : null,
         settingsOpen && settings !== null
           ? h(SettingsDialog, {
               settings,
