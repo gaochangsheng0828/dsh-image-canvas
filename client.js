@@ -49,6 +49,10 @@ window.__ModuleLoader__.load({
         'update.recheck': '重新检查',
         'update.checking': '检查中…',
         'update.later': '稍后',
+        'update.badge': '可更新到',
+        'update.latest': '最新版',
+        'update.source': '数据源',
+        'update.checkHint': '点击检查新版本',
         'action.copy': '复制图片',
         'action.copyLink': '复制图片地址',
         'action.paste': '粘贴',
@@ -168,6 +172,10 @@ window.__ModuleLoader__.load({
         'update.recheck': 'Check again',
         'update.checking': 'Checking…',
         'update.later': 'Later',
+        'update.badge': 'Update to',
+        'update.latest': 'Latest',
+        'update.source': 'source',
+        'update.checkHint': 'Check for a newer version',
         'action.copy': 'Copy image',
         'action.copyLink': 'Copy image address',
         'action.paste': 'Paste',
@@ -3377,6 +3385,32 @@ window.__ModuleLoader__.load({
               )
             : null,
           h('span', { className: 'icv-chip' }, zoomLabel),
+          /**
+           * Always-present version entry.
+           *
+           * The banner above only appears when a newer release exists, which
+           * makes it impossible to tell "no update" from "the check is broken".
+           * This chip states the installed version and checks on click, so the
+           * feature is verifiable at any time.
+           */
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'icv-chip',
+              style: { cursor: 'pointer', height: '22px' },
+              title: update === null ? t('update.checkHint') : `${t('update.latest')} ${String(update.latest ?? '')} · ${t('update.source')} ${String(update.source ?? '')}`,
+              onClick: () => void refreshUpdate(),
+              disabled: updateBusy,
+            },
+            updateBusy
+              ? t('update.checking')
+              : update === null
+                ? t('update.checkHint')
+                : update?.newer === true
+                  ? `${t('update.badge')} ${String(update.latest ?? '')}`
+                  : `v${String(update?.current ?? '')}`,
+          ),
           h('span', { className: 'icv-sr', role: 'status', 'aria-live': 'polite' }, saveState === 'error' ? t('status.saveFailed') : saveState === 'saving' ? t('status.saving') : t('status.saved')),
           h(Button, { icon: 'save', onClick: saveNow, disabled: !loadedOk.current }, t('action.save')),
           h(Button, { icon: 'export', onClick: exportBoard }, t('action.export')),
