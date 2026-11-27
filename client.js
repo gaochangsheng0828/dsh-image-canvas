@@ -3746,17 +3746,39 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots'],
+      // `locale` must be declared here: without it the Client runtime does not
+      // resolve the service for this plugin and `ctx.get('locale')` is undefined
+      // at apply time, which used to leave every label untranslated.
+      inject: ['slots', 'locale'],
       apply(ctx) {
         const locale = ctx.get('locale')
         if (locale !== undefined) {
-          // Register plain `zh` / `en`, the shape every other DSH plugin uses.
-          // An earlier version also registered `zh-CN` / `en-US`; the resolver
-          // matches the plain language tag, so those extra keys were dead weight
-          // and the extra entry made the lookup fall through to `en`.
           ctx.effect(() => locale.register(NS, { zh: DICT.zh, en: DICT.en }), 'image-canvas: locale')
         }
-        const t = locale === undefined ? (key) => key : locale.bind(NS)
+
+        /**
+         * Resolve one label.
+         *
+         * The locale service is preferred, but two failure modes must not reach
+         * the screen as `action.generate` or as English in a Chinese UI:
+         * the service may be absent, and a namespace key may be missing from
+         * the active language. Both fall back to a dictionary chosen from the
+         * document language, which DSH sets from the user's own setting.
+         */
+        const bound = locale === undefined ? undefined : locale.bind(NS)
+        const documentIsChinese = () =>
+          typeof document !== 'undefined' && String(document.documentElement.lang || '').toLowerCase().startsWith('zh')
+        const t = (key, params) => {
+          let template = bound === undefined ? undefined : bound(key, params)
+          if (template === undefined || template === key) {
+            const dict = documentIsChinese() ? DICT.zh : DICT.en
+            template = dict[key] ?? DICT.en[key] ?? key
+          }
+          if (params === undefined) return template
+          return template.replace(/\{(\w+)\}/g, (match, name) =>
+            name in params ? String(params[name]) : match,
+          )
+        }
 
         ctx.effect(
           () =>
