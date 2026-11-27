@@ -90,6 +90,8 @@ window.__ModuleLoader__.load({
         'label.count': '张数',
         'label.model': '模型',
         'label.noModel': '未配置模型',
+        'crash.title': '这块内容出错了',
+        'crash.reset': '重试',
         'label.size': '尺寸',
         'label.references': '参考图',
         'label.baseUrl': '接口地址',
@@ -208,6 +210,8 @@ window.__ModuleLoader__.load({
         'label.count': 'Count',
         'label.model': 'Model',
         'label.noModel': 'No model',
+        'crash.title': 'This part failed to render',
+        'crash.reset': 'Try again',
         'label.size': 'Size',
         'label.references': 'References',
         'label.baseUrl': 'Endpoint',
@@ -409,6 +413,9 @@ window.__ModuleLoader__.load({
 .icv-btn-ghost:hover{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l1)}
 .icv-btn-danger{color:var(--dsw-alias-state-error-primary)}
 .icv-btn-primary.icv-btn-danger{background:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary);color:#fff}
+.icv-crash{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;display:flex;flex-direction:column;gap:10px;max-width:min(420px,90vw);padding:16px 18px;border-radius:10px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 8px 32px rgba(0,0,0,.28)}
+.icv-crash-title{font-size:13px;font-weight:600;color:var(--dsw-alias-state-error-primary)}
+.icv-crash-body{font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary);word-break:break-word}
 .icv-notice{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
 .icv-update{color:var(--dsw-alias-state-success-primary)}
 .icv-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
@@ -1849,7 +1856,7 @@ window.__ModuleLoader__.load({
      * Expanded prompt modal
      * ------------------------------------------------------------------ */
 
-    function PromptModal({ node, t, candidates, onPatch, onReference, onClose, onGenerate, busy }) {
+    function PromptModal({ node, t, candidates, onPatch, onReference, onClose, onGenerate, busy, modelOptions, onOpenSettings }) {
       // The inner editor swallows Escape to close its own @ picker, so the modal
       // listens in the capture phase and closes unless a picker is open.
       useEffect(() => {
@@ -1896,8 +1903,8 @@ window.__ModuleLoader__.load({
               hasImage: Boolean(node.assetId),
               count: node.count,
               onCount: (id, value) => onPatch(id, { count: value }),
-              modelOptions: props.modelOptions,
-              onOpenSettings: props.onOpenSettings,
+              modelOptions,
+              onOpenSettings,
             }),
           ),
         ),
@@ -2310,6 +2317,57 @@ window.__ModuleLoader__.load({
       )
     }
 
+
+    /* ------------------------------------------------------------------ *
+     * Crash guard
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Keeps one broken subtree from taking the whole panel down.
+     *
+     * A React error thrown while rendering a node unwinds the entire tree, so a
+     * bug in one card or one dialog used to leave a blank page with no way back
+     * — the user could not even close the dialog. This boundary reports the
+     * failure in place and offers a reset, leaving the board itself alive.
+     */
+    class CrashGuard extends React.Component {
+      constructor(props) {
+        super(props)
+        this.state = { error: null }
+      }
+
+      static getDerivedStateFromError(error) {
+        return { error }
+      }
+
+      componentDidCatch(error) {
+        // Kept as a console line rather than a toast: the panel already shows the
+        // message, and the console keeps the stack for whoever debugs it.
+        console.error('image-canvas: subtree crashed', error)
+      }
+
+      render() {
+        const error = this.state.error
+        if (error === null) return this.props.children
+        const t = this.props.t
+        return h(
+          'div',
+          { className: 'icv-crash', role: 'alert' },
+          h('div', { className: 'icv-crash-title' }, t('crash.title')),
+          h('div', { className: 'icv-crash-body' }, String(error?.message ?? error)),
+          h(
+            Button,
+            {
+              onClick: () => {
+                this.setState({ error: null })
+                this.props.onReset?.()
+              },
+            },
+            t('crash.reset'),
+          ),
+        )
+      }
+    }
 
     /* ------------------------------------------------------------------ *
      * The board
@@ -3442,6 +3500,9 @@ window.__ModuleLoader__.load({
               link === null ? null : h('path', { className: 'icv-edge icv-edge-active', d: linkPath }),
             ),
             doc.nodes.map((node, index) =>
+              h(
+                CrashGuard,
+                { t, key: node.id },
               h(NodeCard, {
                 key: node.id,
                 node,
@@ -3490,6 +3551,7 @@ window.__ModuleLoader__.load({
                   patchNode(entry.id, { x: entry.x + delta[0], y: entry.y + delta[1] })
                 },
               }),
+              ),
             ),
           ),
           addMenu === null
@@ -3597,7 +3659,10 @@ window.__ModuleLoader__.load({
             })
           : null,
         expandedNode !== null && nodesById.has(expandedNode)
-          ? h(PromptModal, {
+          ? h(
+              CrashGuard,
+              { t, key: `expand-${String(expandedNode)}`, onReset: () => setExpandedNode(null) },
+              h(PromptModal, {
               node: nodesById.get(expandedNode),
               t,
               candidates: candidatesOf(expandedNode),
@@ -3606,7 +3671,10 @@ window.__ModuleLoader__.load({
               onReference: attachReference,
               onGenerate: generate,
               onClose: () => setExpandedNode(null),
-            })
+              modelOptions: settings?.models ?? [],
+              onOpenSettings: () => setSettingsOpen(true),
+            }),
+            )
           : null,
         imageMenu === null
           ? null
