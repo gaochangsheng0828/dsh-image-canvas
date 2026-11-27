@@ -163,13 +163,23 @@ const UPDATE_MAX_BYTES = 256 * 1024
 /** Installed version, read once from this package's own manifest. */
 let ownVersionCache
 
-function readOwnVersion() {
+/**
+ * Read the installed version from this package's manifest.
+ *
+ * @param refresh - when true the memo is discarded first. A forced check uses
+ *   this so that a package replaced on disk while the Host was running is
+ *   compared by its real version, not by the one cached at boot.
+ */
+function readOwnVersion(refresh) {
+  if (refresh === true) ownVersionCache = undefined
   if (ownVersionCache !== undefined) return ownVersionCache
   try {
     const url = new URL('./package.json', import.meta.url)
     const body = JSON.parse(readFileSync(url, 'utf8'))
     ownVersionCache = typeof body.version === 'string' ? body.version : undefined
   } catch {
+    // Left undefined so the next call tries again: a transient read error must
+    // not silently disable the update check for the life of the process.
     ownVersionCache = undefined
   }
   return ownVersionCache
@@ -280,7 +290,7 @@ async function checkForUpdate(force) {
     return updateCache.result
   }
 
-  const current = readOwnVersion()
+  const current = readOwnVersion(force === true)
   let result
   try {
     const latest = await fetchLatestRelease()
