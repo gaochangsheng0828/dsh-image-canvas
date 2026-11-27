@@ -44,6 +44,11 @@ window.__ModuleLoader__.load({
         'action.prev': '上一张',
         'action.next': '下一张',
         'action.dismiss': '知道了',
+        'update.available': '有新版本',
+        'update.open': '去下载',
+        'update.recheck': '重新检查',
+        'update.checking': '检查中…',
+        'update.later': '稍后',
         'action.copy': '复制图片',
         'action.copyLink': '复制图片地址',
         'action.paste': '粘贴',
@@ -158,6 +163,11 @@ window.__ModuleLoader__.load({
         'action.prev': 'Previous',
         'action.next': 'Next',
         'action.dismiss': 'Dismiss',
+        'update.available': 'New version available:',
+        'update.open': 'Get it',
+        'update.recheck': 'Check again',
+        'update.checking': 'Checking…',
+        'update.later': 'Later',
         'action.copy': 'Copy image',
         'action.copyLink': 'Copy image address',
         'action.paste': 'Paste',
@@ -428,6 +438,7 @@ window.__ModuleLoader__.load({
 .icv-btn-danger{color:var(--dsw-alias-state-error-primary)}
 .icv-btn-primary.icv-btn-danger{background:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary);color:#fff}
 .icv-notice{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
+.icv-update{color:var(--dsw-alias-state-success-primary)}
 .icv-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .icv-icon-btn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
 .icv-chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:999px;font-size:11px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);white-space:nowrap}
@@ -2425,6 +2436,16 @@ window.__ModuleLoader__.load({
       const [link, setLink] = useState(null)
       const [sizes, setSizes] = useState({})
       const [stageBox, setStageBox] = useState({ width: 0, height: 0 })
+      /**
+       * Result of the update check.
+       *
+       * DSH's own updater reads npm, so a build shipped as a GitHub Release
+       * would never hear about a new version. This panel asks the Host instead
+       * and shows a banner; the state is `null` until the first answer.
+       */
+      const [update, setUpdate] = useState(null)
+      const [updateDismissed, setUpdateDismissed] = useState(false)
+      const [updateBusy, setUpdateBusy] = useState(false)
 
       const docRef = useRef(doc)
       docRef.current = doc
@@ -2542,6 +2563,48 @@ window.__ModuleLoader__.load({
         })()
         return () => {
           cancelled = true
+        }
+      }, [])
+
+      useEffect(() => {
+        let cancelled = false
+
+        /**
+         * Ask the Host about newer releases.
+         *
+         * Runs once when the panel mounts and then hourly. The Host caches the
+         * answer for six hours, so this is cheap; a failure stays silent here
+         * because a network hiccup is not something the user must act on.
+         */
+        const check = async () => {
+          try {
+            const answer = await requestJson('/update-check', { method: 'GET' })
+            if (!cancelled && answer?.ok === true) setUpdate(answer)
+          } catch {
+            // A failed check is not a user-facing error; keep the last answer.
+          }
+        }
+
+        void check()
+        const timer = setInterval(() => void check(), 60 * 60 * 1000)
+        return () => {
+          cancelled = true
+          clearInterval(timer)
+        }
+      }, [])
+
+      const refreshUpdate = useCallback(async () => {
+        setUpdateBusy(true)
+        try {
+          const answer = await requestJson('/update-check?force=1', { method: 'GET' })
+          if (answer?.ok === true) {
+            setUpdate(answer)
+            setUpdateDismissed(false)
+          }
+        } catch {
+          // Leave the previous answer in place; the banner keeps its state.
+        } finally {
+          setUpdateBusy(false)
         }
       }, [])
 
@@ -3371,6 +3434,33 @@ window.__ModuleLoader__.load({
               h('span', { style: { flex: 1 } }, notice),
               h(Button, { ghost: true, onClick: () => setNotice('') }, t('action.dismiss')),
             ),
+        update?.newer === true && !updateDismissed
+          ? h(
+              'div',
+              { className: 'icv-notice icv-update', role: 'status' },
+              h('span', { style: { flex: 1 } }, `${t('update.available')} ${String(update.latest ?? '')}`),
+              h(
+                Button,
+                {
+                  onClick: () => {
+                    // The release page carries the download and its notes; opening
+                    // it in a new tab keeps the board (and unsaved camera) intact.
+                    const target = update.page
+                    if (typeof target === 'string' && target !== '') {
+                      window.open(target, '_blank', 'noopener,noreferrer')
+                    }
+                  },
+                },
+                t('update.open'),
+              ),
+              h(
+                Button,
+                { ghost: true, disabled: updateBusy, onClick: () => void refreshUpdate() },
+                updateBusy ? t('update.checking') : t('update.recheck'),
+              ),
+              h(Button, { ghost: true, onClick: () => setUpdateDismissed(true) }, t('update.later')),
+            )
+          : null,
         h(
           'div',
           {

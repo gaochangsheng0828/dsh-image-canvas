@@ -22,6 +22,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -130,6 +131,186 @@ function sendBytes(response, status, bytes, type, cacheControl, headOnly) {
     'x-content-type-options': 'nosniff',
   })
   response.end(headOnly === true ? undefined : bytes)
+}
+
+/* -------------------------------------------------------------------------- *
+ * Update check
+ *
+ * DSH's own plugin updater asks npm for a newer version, so a plugin that is
+ * distributed outside npm (this one ships as a GitHub Release tarball) would
+ * never be told a new version exists. This block closes that gap: it asks
+ * GitHub for the newest release of this repository and compares it with the
+ * version in the installed manifest.
+ *
+ * Nothing here takes a URL, repository or version from the caller — the
+ * question is fixed at build time, so the route cannot be aimed elsewhere.
+ * -------------------------------------------------------------------------- */
+
+/** The release feed this check reads. Fixed, not caller-supplied. */
+const UPDATE_REPO = 'gaochangsheng0828/dsh-image-canvas'
+const UPDATE_API = `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`
+const UPDATE_PAGE = `https://github.com/${UPDATE_REPO}/releases/latest`
+
+/** A successful answer is trusted this long; releases are not hourly news. */
+const UPDATE_TTL_MS = 6 * 60 * 60 * 1000
+/** A failure is retried soon: the network may simply have been down. */
+const UPDATE_FAILURE_TTL_MS = 2 * 60 * 1000
+/** Ceiling for one upstream request. */
+const UPDATE_TIMEOUT_MS = 10_000
+/** The answer is one small JSON document; anything larger is not it. */
+const UPDATE_MAX_BYTES = 256 * 1024
+
+/** Installed version, read once from this package's own manifest. */
+let ownVersionCache
+
+function readOwnVersion() {
+  if (ownVersionCache !== undefined) return ownVersionCache
+  try {
+    const url = new URL('./package.json', import.meta.url)
+    const body = JSON.parse(readFileSync(url, 'utf8'))
+    ownVersionCache = typeof body.version === 'string' ? body.version : undefined
+  } catch {
+    ownVersionCache = undefined
+  }
+  return ownVersionCache
+}
+
+/** Split a semver string into comparable parts, or undefined when malformed. */
+function parseVersion(text) {
+  if (typeof text !== 'string') return undefined
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/u.exec(text)
+  if (match === null) return undefined
+  return [Number(match[1]), Number(match[2]), Number(match[3]), match[4] ?? '']
+}
+
+/** Compare prerelease fields the way semver defines, not as plain strings. */
+function comparePrerelease(left, right) {
+  if (left === right) return 0
+  if (left === '') return 1
+  if (right === '') return -1
+  const a = left.split('.')
+  const b = right.split('.')
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const x = a[i]
+    const y = b[i]
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    const numericX = /^\d+$/u.test(x)
+    const numericY = /^\d+$/u.test(y)
+    if (numericX && numericY) {
+      const dx = Number(x)
+      const dy = Number(y)
+      if (dx !== dy) return dx < dy ? -1 : 1
+      continue
+    }
+    if (numericX !== numericY) return numericX ? -1 : 1
+    if (x !== y) return x < y ? -1 : 1
+  }
+  return 0
+}
+
+/** Negative when `a` is older than `b`, 0 when equal, NaN when unparseable. */
+function compareVersions(a, b) {
+  const left = parseVersion(a)
+  const right = parseVersion(b)
+  if (left === undefined || right === undefined) return Number.NaN
+  for (let i = 0; i < 3; i += 1) {
+    if (left[i] !== right[i]) return left[i] - right[i]
+  }
+  return comparePrerelease(left[3], right[3])
+}
+
+/** Read a response body under a hard size cap. */
+async function readCapped(response, cap) {
+  const chunks = []
+  let total = 0
+  for await (const chunk of response.body) {
+    total += chunk.length
+    if (total > cap) throw new Error('上游响应过大。')
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+/** One upstream lookup: the newest release tag, or a thrown error. */
+async function fetchLatestRelease() {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), UPDATE_TIMEOUT_MS)
+  try {
+    const response = await fetch(UPDATE_API, {
+      signal: controller.signal,
+      headers: {
+        accept: 'application/vnd.github+json',
+        'user-agent': 'dsh-image-canvas-update-check',
+      },
+    })
+    if (!response.ok) throw new Error(`GitHub 返回 ${response.status}`)
+    const body = JSON.parse(await readCapped(response, UPDATE_MAX_BYTES))
+    const tag = typeof body.tag_name === 'string' ? body.tag_name : ''
+    const version = tag.replace(/^v/u, '').trim()
+    if (version === '') throw new Error('最新 release 没有 tag。')
+    return {
+      version,
+      tag,
+      page: typeof body.html_url === 'string' && body.html_url !== '' ? body.html_url : UPDATE_PAGE,
+      publishedAt: typeof body.published_at === 'string' ? body.published_at : undefined,
+      notes: typeof body.body === 'string' ? body.body.trim() : '',
+      tarball: (Array.isArray(body.assets) ? body.assets : []).find(
+        (asset) => typeof asset?.name === 'string' && asset.name.endsWith('.tgz'),
+      )?.browser_download_url,
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Cached result of the last check, so the panel can poll cheaply. */
+const updateCache = { at: 0, result: undefined }
+
+/**
+ * Answer the update question, from cache when it is still fresh.
+ *
+ * @param force - when true, the cache is ignored, but the caller is rate
+ *   limited by the panel instead, so a held-down button cannot hammer GitHub.
+ */
+async function checkForUpdate(force) {
+  const now = Date.now()
+  const ttl = updateCache.result?.ok === true ? UPDATE_TTL_MS : UPDATE_FAILURE_TTL_MS
+  if (force !== true && updateCache.result !== undefined && now - updateCache.at < ttl) {
+    return updateCache.result
+  }
+
+  const current = readOwnVersion()
+  let result
+  try {
+    const latest = await fetchLatestRelease()
+    const newer = current !== undefined && compareVersions(current, latest.version) < 0
+    result = {
+      ok: true,
+      current: current ?? null,
+      latest: latest.version,
+      newer,
+      page: latest.page,
+      tarball: latest.tarball ?? null,
+      publishedAt: latest.publishedAt ?? null,
+      notes: latest.notes,
+      source: 'github',
+      checkedAt: new Date().toISOString(),
+    }
+  } catch (error) {
+    result = {
+      ok: false,
+      current: current ?? null,
+      error: describeError(error),
+      page: UPDATE_PAGE,
+      source: 'github',
+      checkedAt: new Date().toISOString(),
+    }
+  }
+
+  updateCache.at = Date.now()
+  updateCache.result = result
+  return result
 }
 
 /** Read a request body up to `limit` bytes, rejecting anything larger. */
@@ -659,6 +840,12 @@ export function apply(ctx) {
               await writeJson(statePath(dataDir), state)
               const pruned = await pruneAssets(dataDir, referencedAssets(state))
               sendJson(response, 200, { ok: true, pruned, savedAt: Date.now() })
+              return
+            }
+
+            if (route === '/update-check' && method === 'GET') {
+              const force = url.searchParams.get('force') === '1'
+              sendJson(response, 200, await checkForUpdate(force))
               return
             }
 
