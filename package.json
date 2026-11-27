@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "dsh-image-canvas",
   "version": "1.1.0",
   "description": "Infinite canvas for AI image work in DeepSeek Harness: text-to-image, image-to-image, upload, crop, preview and generation history.",
@@ -6,11 +6,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gaocs1985/dsh-image-canvas.git"
+    "url": "git+https://github.com/gaochangsheng0828/dsh-image-canvas.git"
   },
-  "homepage": "https://github.com/gaocs1985/dsh-image-canvas#readme",
+  "homepage": "https://github.com/gaochangsheng0828/dsh-image-canvas#readme",
   "bugs": {
-    "url": "https://github.com/gaocs1985/dsh-image-canvas/issues"
+    "url": "https://github.com/gaochangsheng0828/dsh-image-canvas/issues"
   },
   "keywords": [
     "dsh-plugin",
