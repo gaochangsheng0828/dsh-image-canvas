@@ -457,6 +457,7 @@ window.__ModuleLoader__.load({
 .icv-prompt-expand:hover{color:var(--dsw-alias-brand-primary)}
 .icv-controls{display:flex;align-items:center;gap:5px;padding:7px 9px;flex-wrap:nowrap;border-bottom:1px solid var(--dsw-alias-border-l1);overflow:hidden}
 .icv-select{height:26px;padding:0 4px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;max-width:120px;min-width:0}
+.icv-select-model{max-width:190px}
 .icv-node-foot{display:flex;align-items:center;gap:4px;padding:7px 9px;flex-wrap:wrap}
 .icv-refs{display:flex;align-items:center;gap:4px;padding:0 9px 7px;flex-wrap:wrap}
 .icv-ref{position:relative;width:34px;height:34px;border-radius:6px;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
@@ -1779,9 +1780,12 @@ window.__ModuleLoader__.load({
             return h(
               'select',
               {
-                className: 'icv-select',
+                // The label now carries the price (`gpt-image-2.5-flare · $0.038/次`),
+                // which the shared 120px cap would cut off mid-name.
+                className: 'icv-select icv-select-model',
                 value: current,
                 'aria-label': t('label.model'),
+                title: options.find((entry) => entry.value === current)?.label ?? current,
                 onChange: (event) => onPatch(node.id, { model: event.target.value }),
               },
               ...options.map((entry) => h('option', { key: entry.value, value: entry.value }, entry.label)),
@@ -2518,7 +2522,7 @@ window.__ModuleLoader__.load({
           try {
             setSettings(await requestJson('/settings', { method: 'GET' }))
           } catch {
-            setSettings({ baseUrl: '', model: '', defaultSize: '', hasKey: false, keyMask: '' })
+            setSettings({ baseUrl: '', model: '', defaultSize: '', hasKey: false, keyMask: '', models: [] })
           }
         })()
         return () => {

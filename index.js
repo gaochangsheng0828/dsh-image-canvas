@@ -42,56 +42,143 @@ const DEFAULT_BASE_URL = 'https://sub-proxy-us.65535.space'
 const DEFAULT_MODEL = 'gpt-image-2.5-flare'
 
 /**
- * Models each known provider actually serves.
+ * Where the model catalogue comes from.
  *
- * A picker that lists a model the key cannot call is a trap: the user selects
- * it, the request 404s upstream, and the failure looks like a plugin bug. The
- * list is therefore keyed by provider host and the picker only ever shows what
- * the configured endpoint can answer. An unknown host keeps the previous
- * permissive list, because guessing a narrower one would hide working models.
+ * The provider publishes an OpenAI-compatible `/v1/models`, but it carries no
+ * prices and lists video models too. Its console API carries both: each entry
+ * is tagged `image` / `video` / `chat` and priced in micro-USD. Asking the
+ * console therefore yields exactly the models this canvas can call, with the
+ * price the user actually pays once the account's group multiplier is applied.
  *
- * `value` is what the API receives; `label` is what the user reads.
+ * The group matters: without `?group=`, usage-priced models report 0 and
+ * per-request models report the un-discounted rate. The console is read
+ * anonymously, so no credential ever leaves this machine for it.
  */
-const PROVIDER_MODELS = [
-  {
-    // The third-party proxy this plugin ships configured for.
-    match: (host) => host.endsWith('65535.space'),
-    models: [
-      { value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5' },
-      { value: 'gpt-image-2', label: 'GPT Image 2' },
-      { value: 'gpt-image-1', label: 'GPT Image 1' },
-      { value: 'seedream-4', label: 'Seedream 4' },
-      { value: 'flux-kontext', label: 'FLUX Kontext' },
-    ],
-  },
-  {
-    // OpenAI itself; `gpt-image-1` is the only images model it serves.
-    match: (host) => host === 'api.openai.com',
-    models: [
-      { value: 'gpt-image-1', label: 'GPT Image 1' },
-      { value: 'dall-e-3', label: 'DALL·E 3' },
-    ],
-  },
+const CATALOG_BASE = 'https://my.65535.space/api/catalog'
+/** The console's default group when the account has not named one. */
+const CATALOG_DEFAULT_GROUP = '任务专用分组'
+const CATALOG_TIMEOUT_MS = 12_000
+const CATALOG_MAX_BYTES = 512 * 1024
+/** The list changes when the provider adds models, not minute to minute. */
+const CATALOG_TTL_MS = 30 * 60 * 1000
+const CATALOG_FAILURE_TTL_MS = 60 * 1000
+
+/**
+ * Fallback list for when the catalogue cannot be read.
+ *
+ * These are the models this third-party proxy has served for this plugin; they
+ * exist so a network problem leaves a usable picker rather than an empty one.
+ */
+const FALLBACK_MODELS = [
+  { value: 'gpt-image-2.5-flare', label: 'gpt-image-2.5-flare' },
+  { value: 'gpt-image-2.5-sunburst', label: 'gpt-image-2.5-sunburst' },
+  { value: 'gpt-image-2', label: 'gpt-image-2' },
+  { value: 'gemini-3-pro-image', label: 'gemini-3-pro-image' },
 ]
 
-/** Models the configured provider can serve. */
-function modelsForProvider(baseUrl) {
+const catalogCache = { at: 0, key: '', models: undefined }
+
+/** Turn micro-USD into the shortest readable dollar amount. */
+function formatPrice(micro) {
+  if (typeof micro !== 'number' || !Number.isFinite(micro) || micro <= 0) return ''
+  // A micro-USD integer is exact at six decimals, so print that many and strip
+  // the padding: 6000 -> $0.006, 38000 -> $0.038, 38500 -> $0.0385. Rounding to
+  // a fixed number of decimals would silently turn $0.0385 into $0.039.
+  const text = (micro / 1_000_000)
+    .toFixed(6)
+    .replace(/0+$/u, '')
+    .replace(/\.$/u, '')
+  return `$${text}`
+}
+
+/**
+ * The per-request cost of a catalogue entry, or '' when it cannot be stated.
+ *
+ * `size_prices` wins when present: those entries price each resolution tier
+ * separately, so a single number would be wrong. The cheapest tier is reported
+ * with a `+` to say "from", which is honest without inventing a range.
+ */
+function priceOfEntry(entry) {
+  const tiers = entry?.size_prices
+  if (tiers !== null && typeof tiers === 'object' && !Array.isArray(tiers)) {
+    const values = Object.values(tiers).filter((value) => typeof value === 'number' && value > 0)
+    if (values.length > 0) {
+      const cheapest = formatPrice(Math.min(...values))
+      return cheapest === '' ? '' : values.length > 1 ? `${cheapest}+` : cheapest
+    }
+  }
+  return formatPrice(entry?.per_request_micro)
+}
+
+/** One catalogue entry as the picker needs it, or undefined to skip it. */
+function toModelOption(entry) {
+  if (entry === null || typeof entry !== 'object') return undefined
+  const id = typeof entry.id === 'string' ? entry.id : ''
+  if (id === '') return undefined
+  // Only image models belong in this picker; the same endpoint also lists
+  // video and chat models, which this canvas cannot call.
+  const tags = Array.isArray(entry.tags) ? entry.tags : []
+  if (!tags.includes('image')) return undefined
+  if (entry.online === false) return undefined
+  const price = priceOfEntry(entry)
+  return { value: id, label: price === '' ? id : `${id} · ${price}/次`, price }
+}
+
+/** Read the whole catalogue once, from cache while it is still fresh. */
+async function fetchCatalogModels(group) {
+  const key = group
+  const now = Date.now()
+  const fresh =
+    catalogCache.models !== undefined &&
+    catalogCache.key === key &&
+    now - catalogCache.at < CATALOG_TTL_MS
+  if (fresh) return catalogCache.models
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), CATALOG_TIMEOUT_MS)
+  try {
+    const url = group === '' ? CATALOG_BASE : `${CATALOG_BASE}?group=${encodeURIComponent(group)}`
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { accept: 'application/json', 'user-agent': 'dsh-image-canvas-catalog' },
+    })
+    if (!response.ok) throw new Error(`目录返回 ${response.status}`)
+    const body = JSON.parse(await readCapped(response, CATALOG_MAX_BYTES))
+    const entries = Array.isArray(body?.data) ? body.data : []
+    const models = entries.map(toModelOption).filter((entry) => entry !== undefined)
+    if (models.length === 0) throw new Error('目录里没有可用的生图模型。')
+    catalogCache.at = Date.now()
+    catalogCache.key = key
+    catalogCache.models = models
+    return models
+  } catch (error) {
+    // Keep a previously good list rather than degrading to the fallback: a
+    // transient failure must not shrink the picker the user was just using.
+    if (catalogCache.models !== undefined && catalogCache.key === key) return catalogCache.models
+    catalogCache.at = Date.now() - CATALOG_TTL_MS + CATALOG_FAILURE_TTL_MS
+    catalogCache.key = key
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Models the configured provider can serve, with the catalogue as the source. */
+async function modelsForProvider(baseUrl) {
   let host = ''
   try {
     host = new URL(baseUrl).hostname.toLowerCase()
   } catch {
-    return [{ value: DEFAULT_MODEL, label: DEFAULT_MODEL }]
+    return FALLBACK_MODELS
   }
-  for (const provider of PROVIDER_MODELS) {
-    if (provider.match(host)) return provider.models
+  // Only this proxy's console is known; other endpoints keep the fallback list
+  // because their catalogue address is unknown and guessing one is worse.
+  if (!host.endsWith('65535.space')) return FALLBACK_MODELS
+  try {
+    return await fetchCatalogModels(CATALOG_DEFAULT_GROUP)
+  } catch {
+    return FALLBACK_MODELS
   }
-  // Unknown endpoint: offer the default plus the common OpenAI-compatible names
-  // rather than an empty list, which would leave the picker unusable.
-  return [
-    { value: DEFAULT_MODEL, label: DEFAULT_MODEL },
-    { value: 'gpt-image-1', label: 'GPT Image 1' },
-    { value: 'seedream-4', label: 'Seedream 4' },
-  ]
 }
 
 /**
@@ -804,7 +891,9 @@ export function apply(ctx) {
     const stored = await readJson(settingsPath(dataDir), {})
     const key = await readKey()
     const baseUrl = typeof stored.baseUrl === 'string' && stored.baseUrl !== '' ? stored.baseUrl : DEFAULT_BASE_URL
-    const models = key === '' ? [] : modelsForProvider(baseUrl)
+    // With no key there is nothing to call, and the catalogue is keyed to the
+    // account, so the picker stays empty and the UI explains why.
+    const models = key === '' ? [] : await modelsForProvider(baseUrl)
     const byName = typeof stored.model === 'string' && stored.model !== '' ? stored.model : DEFAULT_MODEL
     // A stored model that this provider no longer offers would be sent upstream
     // and fail there; report the default instead so the picker has a valid value.
