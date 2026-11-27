@@ -42,6 +42,59 @@ const DEFAULT_BASE_URL = 'https://sub-proxy-us.65535.space'
 const DEFAULT_MODEL = 'gpt-image-2.5-flare'
 
 /**
+ * Models each known provider actually serves.
+ *
+ * A picker that lists a model the key cannot call is a trap: the user selects
+ * it, the request 404s upstream, and the failure looks like a plugin bug. The
+ * list is therefore keyed by provider host and the picker only ever shows what
+ * the configured endpoint can answer. An unknown host keeps the previous
+ * permissive list, because guessing a narrower one would hide working models.
+ *
+ * `value` is what the API receives; `label` is what the user reads.
+ */
+const PROVIDER_MODELS = [
+  {
+    // The third-party proxy this plugin ships configured for.
+    match: (host) => host.endsWith('65535.space'),
+    models: [
+      { value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5' },
+      { value: 'gpt-image-2', label: 'GPT Image 2' },
+      { value: 'gpt-image-1', label: 'GPT Image 1' },
+      { value: 'seedream-4', label: 'Seedream 4' },
+      { value: 'flux-kontext', label: 'FLUX Kontext' },
+    ],
+  },
+  {
+    // OpenAI itself; `gpt-image-1` is the only images model it serves.
+    match: (host) => host === 'api.openai.com',
+    models: [
+      { value: 'gpt-image-1', label: 'GPT Image 1' },
+      { value: 'dall-e-3', label: 'DALL·E 3' },
+    ],
+  },
+]
+
+/** Models the configured provider can serve. */
+function modelsForProvider(baseUrl) {
+  let host = ''
+  try {
+    host = new URL(baseUrl).hostname.toLowerCase()
+  } catch {
+    return [{ value: DEFAULT_MODEL, label: DEFAULT_MODEL }]
+  }
+  for (const provider of PROVIDER_MODELS) {
+    if (provider.match(host)) return provider.models
+  }
+  // Unknown endpoint: offer the default plus the common OpenAI-compatible names
+  // rather than an empty list, which would leave the picker unusable.
+  return [
+    { value: DEFAULT_MODEL, label: DEFAULT_MODEL },
+    { value: 'gpt-image-1', label: 'GPT Image 1' },
+    { value: 'seedream-4', label: 'Seedream 4' },
+  ]
+}
+
+/**
  * The credential record this plugin owns.
  *
  * The DSH credential store requires `<scope>/<id>`; a key written in any other
@@ -750,12 +803,25 @@ export function apply(ctx) {
   async function readSettings() {
     const stored = await readJson(settingsPath(dataDir), {})
     const key = await readKey()
+    const baseUrl = typeof stored.baseUrl === 'string' && stored.baseUrl !== '' ? stored.baseUrl : DEFAULT_BASE_URL
+    const models = key === '' ? [] : modelsForProvider(baseUrl)
+    const byName = typeof stored.model === 'string' && stored.model !== '' ? stored.model : DEFAULT_MODEL
+    // A stored model that this provider no longer offers would be sent upstream
+    // and fail there; report the default instead so the picker has a valid value.
+    const model =
+      models.length === 0 || models.some((entry) => entry.value === byName)
+        ? byName
+        : (models[0]?.value ?? DEFAULT_MODEL)
     return {
-      baseUrl: typeof stored.baseUrl === 'string' && stored.baseUrl !== '' ? stored.baseUrl : DEFAULT_BASE_URL,
-      model: typeof stored.model === 'string' && stored.model !== '' ? stored.model : DEFAULT_MODEL,
+      baseUrl,
+      model,
       defaultSize: typeof stored.defaultSize === 'string' ? stored.defaultSize : '',
       hasKey: key !== '',
       keyMask: key === '' ? '' : `${key.slice(0, 4)}…${key.slice(-4)}`,
+      // The model picker must offer only what the configured provider can serve.
+      // With no key there is nothing to call, so the list is empty and the UI
+      // explains what to do instead of showing unusable names.
+      models,
     }
   }
 

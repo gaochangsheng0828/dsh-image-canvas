@@ -83,18 +83,13 @@ window.__ModuleLoader__.load({
         'node.textPlaceholder': '写点什么，例如某个角色的设定或画面风格',
         'node.image': '图片节点',
         'node.asset': '素材',
-        'node.try': '尝试：',
-        'node.img2img': '图生图',
-        'node.hd': '图片高清',
-        'node.style': '风格',
-        'node.color': '配色',
-        'node.compose': '构图',
         'node.insertFragment': '插入',
         'node.references': '@ 引用素材',
         'label.ratio': '比例',
         'label.resolution': '分辨率',
         'label.count': '张数',
         'label.model': '模型',
+        'label.noModel': '未配置模型',
         'label.size': '尺寸',
         'label.references': '参考图',
         'label.baseUrl': '接口地址',
@@ -206,18 +201,13 @@ window.__ModuleLoader__.load({
         'node.textPlaceholder': 'Write something — a character sheet, or a style note',
         'node.image': 'Image node',
         'node.asset': 'Material',
-        'node.try': 'Try:',
-        'node.img2img': 'Image to image',
-        'node.hd': 'Image upscale',
-        'node.style': 'Style',
-        'node.color': 'Palette',
-        'node.compose': 'Composition',
         'node.insertFragment': 'Insert',
         'node.references': '@ Reference material',
         'label.ratio': 'Ratio',
         'label.resolution': 'Resolution',
         'label.count': 'Count',
         'label.model': 'Model',
+        'label.noModel': 'No model',
         'label.size': 'Size',
         'label.references': 'References',
         'label.baseUrl': 'Endpoint',
@@ -276,12 +266,14 @@ window.__ModuleLoader__.load({
      * roughly 2048 px. Every pair here is a size this endpoint has been known to
      * take, so the picker never offers a combination it cannot send.
      */
-    const RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']
+    const RATIOS = ['1:1', '4:3', '3:4', '4:5', '5:4', '16:9', '9:16', '3:2', '2:3']
     const RESOLUTIONS = ['1K', '2K']
     const RATIO_BASE = {
       '1:1': [1024, 1024],
       '4:3': [1360, 1020],
       '3:4': [1020, 1360],
+      '4:5': [1024, 1280],
+      '5:4': [1280, 1024],
       '16:9': [1360, 768],
       '9:16': [768, 1360],
       '3:2': [1360, 908],
@@ -311,34 +303,6 @@ window.__ModuleLoader__.load({
       }, { entry: '1:1', distance: Infinity }).entry
       const [w, hgt] = RATIO_BASE[ratio]
       return { ratio, resolution: width > w * 1.5 || height > hgt * 1.5 ? '2K' : '1K' }
-    }
-
-    /** Prompt snippets behind the 风格 / 配色 / 构图 buttons. */
-    const FRAGMENTS = {
-      style: [
-        '写实摄影，自然光，50mm 镜头',
-        '日系动画赛璐璐上色，干净线条',
-        '水彩手绘，纸张纹理，留白',
-        '电影感宽银幕，浅景深，调色偏青橙',
-        '3D 渲染，柔和体积光，Pixar 质感',
-        '国风水墨，飞白笔触，淡彩晕染',
-      ],
-      color: [
-        '低饱和莫兰迪色系',
-        '高饱和撞色，红蓝对比',
-        '暖阳光橙 + 深棕阴影',
-        '夜景冷蓝 + 霓虹粉',
-        '单色渐变，深空蓝调',
-        '复古胶片褪色，米黄偏暖',
-      ],
-      compose: [
-        '人物居中，三分法构图',
-        '低角度仰拍，强调气势',
-        '俯视航拍，大场景留白',
-        '特写半身，背景虚化',
-        '对称构图，画面平衡',
-        '前景遮挡，层次纵深',
-      ],
     }
 
     const MIN_ZOOM = 0.08
@@ -484,13 +448,6 @@ window.__ModuleLoader__.load({
 .icv-prompt-wrap{position:relative;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .icv-prompt-expand{position:absolute;top:6px;right:6px;width:22px;height:22px;border:0;border-radius:5px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
 .icv-prompt-expand:hover{color:var(--dsw-alias-brand-primary)}
-.icv-fragments{display:flex;align-items:center;gap:5px;padding:7px 9px;flex-wrap:wrap;border-bottom:1px solid var(--dsw-alias-border-l1)}
-.icv-frag{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;cursor:pointer;position:relative}
-.icv-frag:hover{border-color:var(--dsw-alias-brand-primary)}
-.icv-frag-swatch{width:10px;height:10px;border-radius:3px;flex:none}
-.icv-frag-pop{position:absolute;top:100%;left:0;margin-top:4px;z-index:6;min-width:230px;max-width:280px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-overlay);box-shadow:0 10px 30px rgba(0,0,0,.28);padding:4px;display:flex;flex-direction:column;gap:1px}
-.icv-frag-item{display:block;width:100%;text-align:left;border:0;background:none;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:1.5;padding:6px 8px;border-radius:6px;cursor:pointer}
-.icv-frag-item:hover{background:var(--dsw-alias-bg-layer-2)}
 .icv-controls{display:flex;align-items:center;gap:5px;padding:7px 9px;flex-wrap:nowrap;border-bottom:1px solid var(--dsw-alias-border-l1);overflow:hidden}
 .icv-select{height:26px;padding:0 4px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;max-width:120px;min-width:0}
 .icv-node-foot{display:flex;align-items:center;gap:4px;padding:7px 9px;flex-wrap:wrap}
@@ -585,7 +542,6 @@ window.__ModuleLoader__.load({
 .icv-expanded{width:min(760px,94vw)}
 .icv-expanded .icv-prompt{min-height:220px;max-height:52vh;font-size:14px;line-height:1.7;padding:14px}
 .icv-expanded .icv-controls{padding:10px 14px}
-.icv-expanded .icv-fragments{padding:10px 14px}
 `
 
     /* ------------------------------------------------------------------ *
@@ -1714,22 +1670,12 @@ window.__ModuleLoader__.load({
      * Prompt editor — the inline textarea and its expanded modal twin
      * ------------------------------------------------------------------ */
 
-    function PromptEditor({ node, t, expanded, candidates, onPatch, onReference, onExpand, onGenerate, onPickFragment, busy, hasImage, count, onCount }) {
+    function PromptEditor({ node, t, expanded, candidates, onPatch, onReference, onExpand, onGenerate, onPickFragment, busy, hasImage, count, onCount, modelOptions, onOpenSettings }) {
       const areaRef = useRef(null)
       const [picking, setPicking] = useState(false)
-      const [openGroup, setOpenGroup] = useState(null)
       const parsed = pickersFrom(node.size)
 
       const setPrompt = (value) => onPatch(node.id, { prompt: value })
-
-      /** Append a snippet without losing the caret or glueing words together. */
-      const appendFragment = (text) => {
-        const current = node.prompt ?? ''
-        const separator = current.trim() === '' || /[\s，。]$/u.test(current) ? '' : '，'
-        setPrompt(`${current}${separator}${text}`)
-        setOpenGroup(null)
-        areaRef.current?.focus?.()
-      }
 
       const chooseReference = (candidate) => {
         onReference(node.id, candidate)
@@ -1793,61 +1739,47 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { className: 'icv-fragments' },
-          ...[
-            ['style', t('node.style'), null, 'sparkleImage'],
-            ['color', t('node.color'), 'conic-gradient(#e2725b,#e6b85c,#7fb069,#5b9bd5,#8e6bc7,#e2725b)', 'palette'],
-            ['compose', t('node.compose'), null, 'layout'],
-          ].map(([group, label, swatch, icon]) =>
-            h(
-              'div',
-              { key: group, style: { position: 'relative' } },
-              h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'icv-frag',
-                  onClick: (event) => {
-                    event.stopPropagation()
-                    setOpenGroup((current) => (current === group ? null : group))
-                  },
-                },
-                h(Icon, { name: icon, size: 13 }),
-                h('span', null, label),
-              ),
-              openGroup === group
-                ? h(
-                    'div',
-                    { className: 'icv-frag-pop', onPointerDown: (event) => event.stopPropagation() },
-                    ...FRAGMENTS[group].map((text) =>
-                      h(
-                        'button',
-                        { type: 'button', key: text, className: 'icv-frag-item', onClick: () => appendFragment(text) },
-                        text,
-                      ),
-                    ),
-                  )
-                : null,
-            ),
-          ),
-        ),
-        h(
-          'div',
           { className: 'icv-controls' },
           h('span', { className: 'icv-node-dot', style: { background: 'var(--dsw-alias-label-secondary)' } }),
           h('span', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, t('label.model')),
-          h(
-            'select',
-            {
-              className: 'icv-select',
-              value: node.model ?? '',
-              'aria-label': t('label.model'),
-              onChange: (event) => onPatch(node.id, { model: event.target.value }),
-            },
-            ...[['', 'gpt-image'], ['gpt-image-2.5-flare', 'flare'], ['gpt-image-1', 'gpt-image-1'], ['seedream-4', 'seedream-4'], ['flux-kontext', 'flux-kontext']].map(
-              ([value, label]) => h('option', { key: value || 'default', value }, label),
-            ),
-          ),
+          /**
+           * Model picker.
+           *
+           * The Host knows which provider the configured key belongs to, so the
+           * list arrives from `/settings` instead of being hard-coded here. An
+           * empty list means no key yet: the control states that instead of
+           * offering names that would fail upstream.
+           */
+          (() => {
+            const options = Array.isArray(modelOptions) ? modelOptions : []
+            if (options.length === 0) {
+              return h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'icv-chip icv-chip-warn',
+                  style: { height: '26px', cursor: 'pointer' },
+                  title: t('settings.keyHint'),
+                  onClick: (event) => {
+                    event.stopPropagation()
+                    onOpenSettings?.()
+                  },
+                },
+                t('label.noModel'),
+              )
+            }
+            const current = node.model ?? options[0]?.value ?? ''
+            return h(
+              'select',
+              {
+                className: 'icv-select',
+                value: current,
+                'aria-label': t('label.model'),
+                onChange: (event) => onPatch(node.id, { model: event.target.value }),
+              },
+              ...options.map((entry) => h('option', { key: entry.value, value: entry.value }, entry.label)),
+            )
+          })(),
           h(
             'select',
             {
@@ -1879,7 +1811,9 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'icv-node-foot' },
-          h(IconButton, { name: 'spark', title: t('action.generate'), onClick: () => onGenerate(node.id) }),
+          /* One generate control only: the labelled button on the right already
+           * carries the icon, so the icon-only twin on the left was a duplicate
+           * that also made the bar look crowded. */
           h('div', { className: 'icv-spacer', style: { flex: 1 } }),
           busy
             ? h('span', { className: 'icv-chip icv-chip-warn' }, t('status.generating'))
@@ -1922,8 +1856,7 @@ window.__ModuleLoader__.load({
         const onKey = (event) => {
           if (event.key !== 'Escape') return
           const picking = document.querySelector('.icv-refpop') !== null
-          const fragmentOpen = document.querySelector('.icv-frag-pop') !== null
-          if (picking || fragmentOpen) return
+          if (picking) return
           event.stopPropagation()
           onClose()
         }
@@ -1963,6 +1896,8 @@ window.__ModuleLoader__.load({
               hasImage: Boolean(node.assetId),
               count: node.count,
               onCount: (id, value) => onPatch(id, { count: value }),
+              modelOptions: props.modelOptions,
+              onOpenSettings: props.onOpenSettings,
             }),
           ),
         ),
@@ -2007,17 +1942,6 @@ window.__ModuleLoader__.load({
         observer.observe(element)
         return () => observer.disconnect()
       }, [node.id, props.registerSize, width, busy, hasImage, isAsset])
-
-      /** Snippets that fill the prompt with a starting instruction. */
-      const tryTemplate = (kind) => {
-        const current = (node.prompt ?? '').trim()
-        const seed = kind === 'img2img' ? t('node.img2img') : t('node.hd')
-        props.onPatch(node.id, {
-          prompt: current === '' ? `${seed}：` : current,
-        })
-        // Put the caret in the prompt so the next keystroke edits it.
-        props.onFocusPrompt?.(node.id)
-      }
 
       const head = h(
         'div',
@@ -2252,40 +2176,8 @@ window.__ModuleLoader__.load({
                     h(Icon, { name: 'image', size: 34 }),
                     hasImage ? null : h('div', null, t('prompt.placeholder')),
                   ),
-            /* Before the first result the card teaches its own next steps. */
-            hasImage || busy
-              ? null
-              : h(
-                  'div',
-                  { className: 'icv-template' },
-                  h('div', { className: 'icv-template-label' }, t('node.try')),
-                  h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: 'icv-template-row',
-                      onClick: (event) => {
-                        event.stopPropagation()
-                        tryTemplate('img2img')
-                      },
-                    },
-                    h(Icon, { name: 'upload', size: 13 }),
-                    h('span', null, t('node.img2img')),
-                  ),
-                  h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: 'icv-template-row',
-                      onClick: (event) => {
-                        event.stopPropagation()
-                        tryTemplate('hd')
-                      },
-                    },
-                    h(Icon, { name: 'upscale', size: 13 }),
-                    h('span', null, t('node.hd')),
-                  ),
-                ),
+            /* The card stays empty until there is a result to show. */
+            null,
           ),
           references.length > 0
             ? h(
@@ -2323,6 +2215,8 @@ window.__ModuleLoader__.load({
             onExpand: props.onExpand,
             onGenerate: props.onGenerate,
             onCount: (id, value) => props.onPatch(id, { count: value }),
+            modelOptions: props.modelOptions,
+            onOpenSettings: props.onOpenSettings,
           }),
           node.error ? h('div', { className: 'icv-node-error' }, node.error) : null,
           hasImage
@@ -3573,6 +3467,8 @@ window.__ModuleLoader__.load({
                 onPickHistory: pickHistory,
                 onDropHistory: dropHistory,
                 onExpand: setExpandedNode,
+                modelOptions: settings?.models ?? [],
+                onOpenSettings: () => setSettingsOpen(true),
                 onImageMenu: (event, entry) => {
                   // Keep the menu inside the viewport on a right-click near an edge.
                   const width = 210
