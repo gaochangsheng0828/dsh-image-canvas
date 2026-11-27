@@ -105,9 +105,12 @@ an ordinary package whose `package.json` declares `dsh.bundle.patch`.
    (`dsh-image-canvas`).
 3. Enable the bundle, then reopen DSH once so the new routes load.
 
-**From a tarball:** `npm pack` produces `dsh-image-canvas-1.1.0.tgz`; send that
-file, and the recipient installs it the same way (some DSH builds accept a
-`.tgz` path in **Add plugin**).
+**From a tarball (recommended when npm is unavailable):** download
+`dsh-image-canvas-1.1.0.tgz` from the
+[releases page](https://github.com/gaochangsheng0828/dsh-image-canvas/releases),
+then install it the same way (some DSH builds accept a `.tgz` path in
+**Add plugin**). Verified: installing that tarball yields a working
+`dsh-image-canvas@1.1.0` with its `dsh.bundle.patch` intact.
 
 **From npm:** once published as `dsh-image-canvas`, anyone can install it with
 the plugin manager's package field.
