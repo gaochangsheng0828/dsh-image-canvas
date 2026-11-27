@@ -150,6 +150,15 @@ function sendBytes(response, status, bytes, type, cacheControl, headOnly) {
 const UPDATE_REPO = 'gaochangsheng0828/dsh-image-canvas'
 const UPDATE_API = `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`
 const UPDATE_PAGE = `https://github.com/${UPDATE_REPO}/releases/latest`
+/**
+ * CDN-served alternatives, used when the REST API is rate limited.
+ *
+ * The REST API allows 60 anonymous requests per hour per address, shared with
+ * every other project on that address; the Atom feed is not part of that
+ * budget. Both are fixed strings, so nothing here can be pointed elsewhere.
+ */
+const UPDATE_ATOM = `https://github.com/${UPDATE_REPO}/releases.atom`
+const UPDATE_DOWNLOAD_BASE = `https://github.com/${UPDATE_REPO}/releases/download`
 
 /** A successful answer is trusted this long; releases are not hourly news. */
 const UPDATE_TTL_MS = 6 * 60 * 60 * 1000
@@ -242,32 +251,97 @@ async function readCapped(response, cap) {
   return Buffer.concat(chunks).toString('utf8')
 }
 
+/**
+ * The newest release, from the REST API.
+ *
+ * This carries the release notes and the tarball asset, but anonymous callers
+ * share a 60 requests/hour budget per address, which a shared or corporate
+ * address can exhaust without this plugin being at fault. `fetchLatestViaAtom`
+ * is the fallback for exactly that case.
+ */
+async function fetchLatestViaApi(signal) {
+  const response = await fetch(UPDATE_API, {
+    signal,
+    headers: {
+      accept: 'application/vnd.github+json',
+      'user-agent': 'dsh-image-canvas-update-check',
+    },
+  })
+  if (!response.ok) {
+    const error = new Error(`GitHub API 返回 ${response.status}`)
+    error.status = response.status
+    throw error
+  }
+  const body = JSON.parse(await readCapped(response, UPDATE_MAX_BYTES))
+  const tag = typeof body.tag_name === 'string' ? body.tag_name : ''
+  const version = tag.replace(/^v/u, '').trim()
+  if (version === '') throw new Error('最新 release 没有 tag。')
+  return {
+    version,
+    tag,
+    page: typeof body.html_url === 'string' && body.html_url !== '' ? body.html_url : UPDATE_PAGE,
+    publishedAt: typeof body.published_at === 'string' ? body.published_at : undefined,
+    notes: typeof body.body === 'string' ? body.body.trim() : '',
+    tarball: (Array.isArray(body.assets) ? body.assets : []).find(
+      (asset) => typeof asset?.name === 'string' && asset.name.endsWith('.tgz'),
+    )?.browser_download_url,
+    source: 'api',
+  }
+}
+
+/**
+ * The newest release, from the releases Atom feed.
+ *
+ * `releases.atom` is served from GitHub's CDN and is not part of the REST rate
+ * limit, so it keeps working when the API answers 403. It has no assets or
+ * notes, so the download link is derived from the tag — which is the URL
+ * GitHub itself uses for a release asset of that name.
+ */
+async function fetchLatestViaAtom(signal) {
+  const response = await fetch(UPDATE_ATOM, {
+    signal,
+    headers: {
+      accept: 'application/atom+xml',
+      'user-agent': 'dsh-image-canvas-update-check',
+    },
+  })
+  if (!response.ok) throw new Error(`GitHub Atom 返回 ${response.status}`)
+  const xml = await readCapped(response, UPDATE_MAX_BYTES)
+  // The first <entry> is the newest release. Its <id> ends in the tag, which is
+  // more reliable to parse than the human-readable <title>.
+  const entries = xml.split(/<entry>/u).slice(1)
+  for (const entry of entries) {
+    const idMatch = /<id>[^<]*\/([^/<]+)<\/id>/u.exec(entry)
+    const tag = idMatch?.[1] ?? ''
+    const version = tag.replace(/^v/u, '').trim()
+    if (version === '') continue
+    const linkMatch = /<link[^>]+href="([^"]+)"/u.exec(entry)
+    const updatedMatch = /<updated>([^<]+)<\/updated>/u.exec(entry)
+    return {
+      version,
+      tag,
+      page: linkMatch?.[1] ?? UPDATE_PAGE,
+      publishedAt: updatedMatch?.[1],
+      notes: '',
+      tarball: `${UPDATE_DOWNLOAD_BASE}/${tag}/dsh-image-canvas-${version}.tgz`,
+      source: 'atom',
+    }
+  }
+  throw new Error('Atom 订阅里没有可识别的 release。')
+}
+
 /** One upstream lookup: the newest release tag, or a thrown error. */
 async function fetchLatestRelease() {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), UPDATE_TIMEOUT_MS)
+  const signal = controller.signal
   try {
-    const response = await fetch(UPDATE_API, {
-      signal: controller.signal,
-      headers: {
-        accept: 'application/vnd.github+json',
-        'user-agent': 'dsh-image-canvas-update-check',
-      },
-    })
-    if (!response.ok) throw new Error(`GitHub 返回 ${response.status}`)
-    const body = JSON.parse(await readCapped(response, UPDATE_MAX_BYTES))
-    const tag = typeof body.tag_name === 'string' ? body.tag_name : ''
-    const version = tag.replace(/^v/u, '').trim()
-    if (version === '') throw new Error('最新 release 没有 tag。')
-    return {
-      version,
-      tag,
-      page: typeof body.html_url === 'string' && body.html_url !== '' ? body.html_url : UPDATE_PAGE,
-      publishedAt: typeof body.published_at === 'string' ? body.published_at : undefined,
-      notes: typeof body.body === 'string' ? body.body.trim() : '',
-      tarball: (Array.isArray(body.assets) ? body.assets : []).find(
-        (asset) => typeof asset?.name === 'string' && asset.name.endsWith('.tgz'),
-      )?.browser_download_url,
+    try {
+      return await fetchLatestViaApi(signal)
+    } catch (apiError) {
+      // A rate limit is the expected reason to fall back; any other API failure
+      // tries the CDN too, because a working answer beats a precise error.
+      return await fetchLatestViaAtom(signal)
     }
   } finally {
     clearTimeout(timer)
@@ -304,7 +378,7 @@ async function checkForUpdate(force) {
       tarball: latest.tarball ?? null,
       publishedAt: latest.publishedAt ?? null,
       notes: latest.notes,
-      source: 'github',
+      source: latest.source ?? 'api',
       checkedAt: new Date().toISOString(),
     }
   } catch (error) {
@@ -313,7 +387,7 @@ async function checkForUpdate(force) {
       current: current ?? null,
       error: describeError(error),
       page: UPDATE_PAGE,
-      source: 'github',
+      source: 'none',
       checkedAt: new Date().toISOString(),
     }
   }
