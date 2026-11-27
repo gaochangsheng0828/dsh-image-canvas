@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
 
     const DICT = {
       zh: {
-        'panel.title': '无限画布',
+        'panel.title': '简单画布',
         'panel.hint': '拖动空白处平移 · 滚轮缩放 · 双击空白处添加节点',
         'action.upload': '上传',
         'action.addNode': '添加节点',
@@ -117,6 +117,8 @@ window.__ModuleLoader__.load({
         'preview.zoomOut': '缩小',
         'preview.reset': '复位',
         'history.label': '生成历史',
+      'theme.toDark': '切换到暗色',
+      'theme.toLight': '切换到亮色',
         'history.empty': '还没有生成记录',
         'history.current': '当前',
         'history.remove': '从历史移除',
@@ -151,7 +153,7 @@ window.__ModuleLoader__.load({
         'confirm.deleteBody': '节点和它的连线会一起删除，已经保存的图片素材仍然留在磁盘上。',
       },
       en: {
-        'panel.title': 'Infinite canvas',
+        'panel.title': 'Simple canvas',
         'panel.hint': 'Drag empty space to pan · scroll to zoom · double-click empty space to add a node',
         'action.upload': 'Upload',
         'action.addNode': 'Add node',
@@ -246,6 +248,8 @@ window.__ModuleLoader__.load({
         'preview.zoomOut': 'Zoom out',
         'preview.reset': 'Reset',
         'history.label': 'History',
+      'theme.toDark': 'Switch to dark',
+      'theme.toLight': 'Switch to light',
         'history.empty': 'Nothing generated yet',
         'history.current': 'Current',
         'history.remove': 'Remove from history',
@@ -456,11 +460,12 @@ window.__ModuleLoader__.load({
 .icv-btn:hover{border-color:var(--dsw-alias-border-l2)}
 .icv-btn:disabled{opacity:.5;cursor:default}
 .icv-btn-primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:#fff}
+body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-1000,#141414)}
 .icv-btn-primary:hover{filter:brightness(1.06)}
 .icv-btn-ghost{background:transparent;border-color:transparent}
 .icv-btn-ghost:hover{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l1)}
 .icv-btn-danger{color:var(--dsw-alias-state-error-primary)}
-.icv-btn-primary.icv-btn-danger{background:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary);color:#fff}
+.icv-btn-primary.icv-btn-danger{background:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-brand-text,#fff)}
 .icv-crash{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;display:flex;flex-direction:column;gap:10px;max-width:min(420px,90vw);padding:16px 18px;border-radius:10px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 8px 32px rgba(0,0,0,.28)}
 .icv-crash-title{font-size:13px;font-weight:600;color:var(--dsw-alias-state-error-primary)}
 .icv-crash-body{font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary);word-break:break-word}
@@ -508,6 +513,19 @@ window.__ModuleLoader__.load({
 .icv-select-model{max-width:230px}
 .icv-controls-label{flex:none;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .icv-busy-elapsed{font-size:11px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+.icv-rail{position:absolute;left:0;top:0;bottom:0;width:132px;z-index:6;display:flex;flex-direction:column;border-right:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
+.icv-rail-head{display:flex;align-items:center;gap:5px;padding:7px 8px;font-size:11px;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.icv-rail-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:8px}
+.icv-rail-item{position:relative;width:100%;aspect-ratio:1;border-radius:7px;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);cursor:pointer}
+.icv-rail-item img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+.icv-rail-item[data-active="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px var(--dsw-alias-brand-primary)}
+.icv-rail-x{position:absolute;top:0;right:0;width:16px;height:16px;border-radius:0 0 0 7px;background:rgba(0,0,0,.62);color:#fff;font-size:11px;line-height:16px;text-align:center;opacity:0;transition:opacity .12s}
+.icv-rail-item:hover .icv-rail-x{opacity:1}
+.icv-rail-num{position:absolute;left:3px;bottom:3px;padding:0 4px;border-radius:4px;background:rgba(0,0,0,.55);color:#fff;font-size:9px;line-height:13px}
+.icv-rail-empty{padding:16px 10px;font-size:11px;line-height:1.6;color:var(--dsw-alias-label-secondary);text-align:center}
+.icv-rail-collapsed{position:absolute;left:0;top:50%;transform:translateY(-50%);z-index:6;width:20px;height:52px;border-radius:0 6px 6px 0;border:0;border-right:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.icv-rail-collapsed:hover{background:var(--dsw-alias-bg-layer-2)}
+.icv-stage[data-rail='open']{padding-left:132px}
 .icv-node-foot{display:flex;align-items:center;gap:4px;padding:7px 9px;flex-wrap:wrap}
 .icv-refs{display:flex;align-items:center;gap:4px;padding:0 9px 7px;flex-wrap:wrap}
 .icv-ref{position:relative;width:34px;height:34px;border-radius:6px;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
@@ -650,6 +668,10 @@ window.__ModuleLoader__.load({
       zoomIn: 'M11 5v12M5 11h12M20 20l-4.3-4.3',
       zoomOut: 'M5 11h12M20 20l-4.3-4.3',
       history: 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 8v4l3 2',
+      sun: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM12 2v2.5M12 19.5V22M4.2 4.2 6 6M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8',
+      moon: 'M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z',
+      collapseLeft: 'M15 5l-7 7 7 7M4 4v16',
+      collapseRight: 'M9 5l7 7-7 7M20 4v16',
     }
 
     function Icon({ name, size }) {
@@ -2223,7 +2245,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'icv-spacer', style: { flex: 1 } }),
           busy
             ? h('span', { className: 'icv-chip icv-chip-warn' }, t('status.generating'))
-            : h('span', { className: 'icv-mono' }, hasImage ? t('action.regenerate') : ''),
+            : null,
           h(
             'button',
             {
@@ -2646,58 +2668,6 @@ window.__ModuleLoader__.load({
           hasImage
             ? h(
                 'div',
-                { className: 'icv-history' },
-                h(
-                  'div',
-                  { className: 'icv-history-head' },
-                  h(Icon, { name: 'history', size: 12 }),
-                  h('span', null, t('history.label')),
-                  h('span', { className: 'icv-history-count' }, historyIndex.total === 0 ? t('history.empty') : `${String(historyIndex.index + 1)}/${String(historyIndex.total)}`),
-                ),
-                historyList.length === 0
-                  ? null
-                  : h(
-                      'div',
-                      { className: 'icv-history-strip' },
-                      ...historyList.map((assetId, position) =>
-                        h(
-                          'button',
-                          {
-                            type: 'button',
-                            key: `${assetId}-${String(position)}`,
-                            className: 'icv-history-thumb',
-                            'data-active': assetId === node.assetId ? 'true' : 'false',
-                            title: t('history.current'),
-                            onClick: (event) => {
-                              event.stopPropagation()
-                              props.onPickHistory(node.id, assetId)
-                            },
-                          },
-                          h('img', { src: assetUrl(assetId), alt: '', draggable: false }),
-                          historyList.length > 1
-                            ? h(
-                                'span',
-                                {
-                                  className: 'icv-history-x',
-                                  title: t('history.remove'),
-                                  role: 'button',
-                                  tabIndex: 0,
-                                  onClick: (event) => {
-                                    event.stopPropagation()
-                                    props.onDropHistory(node.id, assetId)
-                                  },
-                                },
-                                '\u00d7',
-                              )
-                            : null,
-                        ),
-                      ),
-                    ),
-              )
-            : null,
-          hasImage
-            ? h(
-                'div',
                 { className: 'icv-node-foot', style: { borderTop: '1px solid var(--dsw-alias-border-l1)' } },
                 h(IconButton, { name: 'image', title: t('action.preview'), onClick: () => props.onPreview(node) }),
                 h(IconButton, { name: 'crop', title: t('action.crop'), onClick: () => props.onCrop(node) }),
@@ -2731,6 +2701,78 @@ window.__ModuleLoader__.load({
         }),
         h('div', { className: 'icv-port icv-port-in', title: t('label.references') }),
         h('div', { className: 'icv-resize', onPointerDown: (event) => props.onResize(event, node) }),
+      )
+    }
+
+
+    /* ------------------------------------------------------------------ *
+     * History sidebar
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Generation history for the selected card, as a collapsible left rail.
+     *
+     * Kept out of the card on purpose: the in-card strip pushed the prompt area
+     * short and vanished with the card. One rail shows whichever card is
+     * selected and folds away when the board needs the room.
+     */
+    function HistoryRail({ t, open, onToggle, node, onPick, onDrop, onPreview }) {
+      const items = node === undefined || !Array.isArray(node.history) ? [] : node.history
+      if (!open) {
+        return h(
+          'button',
+          { type: 'button', className: 'icv-rail-collapsed', title: t('history.label'), onClick: onToggle },
+          h(Icon, { name: 'collapseRight', size: 14 }),
+        )
+      }
+      return h(
+        'div',
+        { className: 'icv-rail' },
+        h(
+          'div',
+          { className: 'icv-rail-head' },
+          h(Icon, { name: 'history', size: 13 }),
+          h('span', null, t('history.label')),
+          h('div', { className: 'icv-spacer' }),
+          h(IconButton, { name: 'collapseLeft', title: t('action.close'), onClick: onToggle }),
+        ),
+        items.length === 0
+          ? h('div', { className: 'icv-rail-empty' }, t('history.empty'))
+          : h(
+              'div',
+              { className: 'icv-rail-list' },
+              ...items.map((assetId, position) =>
+                h(
+                  'div',
+                  {
+                    key: assetId + '-' + String(position),
+                    className: 'icv-rail-item',
+                    'data-active': node.assetId === assetId ? 'true' : 'false',
+                    title: t('history.current'),
+                    onClick: () => onPick(node.id, assetId),
+                    onDoubleClick: () => onPreview(assetId),
+                  },
+                  h('img', { src: assetUrl(assetId), alt: '', draggable: false, loading: 'lazy' }),
+                  h('span', { className: 'icv-rail-num' }, String(position + 1)),
+                  items.length > 1
+                    ? h(
+                        'span',
+                        {
+                          className: 'icv-rail-x',
+                          title: t('history.remove'),
+                          role: 'button',
+                          tabIndex: 0,
+                          onClick: (event) => {
+                            event.stopPropagation()
+                            onDrop(node.id, assetId)
+                          },
+                        },
+                        String.fromCharCode(215),
+                      )
+                    : null,
+                ),
+              ),
+            ),
       )
     }
 
@@ -2817,6 +2859,17 @@ window.__ModuleLoader__.load({
 
     function CanvasPanel(props) {
       const t = typeof props.t === 'function' ? props.t : (key) => key
+        /** Theme bridge built in apply; absent only if the plugin ran without one. */
+        const themeBridge = props.theme
+        const readDomMode = () =>
+          typeof document !== 'undefined' && document.body?.hasAttribute?.('data-ds-dark-theme') ? 'dark' : 'light'
+        const [themeMode, setThemeMode] = useState(readDomMode)
+        const themeReady = themeBridge !== undefined && themeBridge.available()
+        const toggleTheme = useCallback(() => {
+          themeBridge?.write(themeMode === 'dark' ? 'light' : 'dark')
+          // DSH writes the attribute itself, so re-read on the next tick.
+          window.setTimeout(() => setThemeMode(readDomMode()), 0)
+        }, [themeBridge, themeMode])
       const stageRef = useRef(null)
       const fileRef = useRef(null)
       const [doc, setDoc] = useState({ nodes: [], edges: [], view: { x: 60, y: 60, k: 1 } })
@@ -2833,6 +2886,8 @@ window.__ModuleLoader__.load({
       const [addMenu, setAddMenu] = useState(null)
       const [imageMenu, setImageMenu] = useState(null)
       const [settingsOpen, setSettingsOpen] = useState(false)
+      /** The left history rail is open until the user folds it away. */
+      const [railOpen, setRailOpen] = useState(true)
       /** The asset library: pictures that outlive the card that made them. */
       const [libraryOpen, setLibraryOpen] = useState(false)
       const [pendingDelete, setPendingDelete] = useState(null)
@@ -3853,6 +3908,13 @@ window.__ModuleLoader__.load({
           h(Button, { icon: 'export', onClick: exportBoard }, t('action.export')),
           h(Button, { icon: 'import', onClick: () => importRef.current?.click() }, t('action.import')),
             h(Button, { icon: 'history', onClick: () => setLibraryOpen(true) }, t('library.title')),
+            themeReady
+              ? h(IconButton, {
+                  name: themeMode === 'dark' ? 'moon' : 'sun',
+                  title: themeMode === 'dark' ? t('theme.toLight') : t('theme.toDark'),
+                  onClick: toggleTheme,
+                })
+              : null,
           h('input', {
             ref: importRef,
             type: 'file',
@@ -3933,6 +3995,15 @@ window.__ModuleLoader__.load({
               h(Button, { ghost: true, onClick: () => setUpdateDismissed(true) }, t('update.later')),
             )
           : null,
+        h(HistoryRail, {
+          t,
+          open: railOpen,
+          onToggle: () => setRailOpen((current) => !current),
+          node: selected === null ? undefined : nodesById.get(selected),
+          onPick: pickHistory,
+          onDrop: dropHistory,
+          onPreview: (assetId) => setPreview({ id: assetId, assetId }),
+        }),
         h(
           'div',
           {
@@ -4248,6 +4319,38 @@ window.__ModuleLoader__.load({
       // at apply time, which used to leave every label untranslated.
       inject: ['slots', 'locale'],
       apply(ctx) {
+        /**
+         * Light/dark control.
+         *
+         * Never listed in `inject`: that array names client *packages* to load,
+         * not service names, and a bare "theme" entry there makes the loader
+         * look for a package that does not exist — the plugin then fails to
+         * load and the panel is blank. Read lazily here instead.
+         */
+        const themeBridge = {
+          available: () => {
+            try {
+              return ctx.get('theme') !== undefined
+            } catch {
+              return false
+            }
+          },
+          read: () => {
+            try {
+              return document.body?.hasAttribute?.('data-ds-dark-theme') ? 'dark' : 'light'
+            } catch {
+              return 'light'
+            }
+          },
+          write: (mode) => {
+            try {
+              ctx.get('theme')?.setTheme?.(mode)
+            } catch {
+              // A build without that theme id keeps its current look.
+            }
+          },
+        }
+
         const locale = ctx.get('locale')
         if (locale !== undefined) {
           ctx.effect(() => locale.register(NS, { zh: DICT.zh, en: DICT.en }), 'image-canvas: locale')
@@ -4281,7 +4384,7 @@ window.__ModuleLoader__.load({
           () =>
             ctx.slots.inject('main', () =>
               ctx.slots.register({ name: 'main', key: 'image-canvas', locale: NS }, (slotProps) =>
-                h(CanvasPanel, { ...slotProps, t }),
+                h(CanvasPanel, { ...slotProps, t, theme: themeBridge }),
               ),
             ),
           'image-canvas: main panel',
