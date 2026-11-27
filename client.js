@@ -3750,18 +3750,11 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         const locale = ctx.get('locale')
         if (locale !== undefined) {
-          // DSH's baseline locale ids are `zh-CN` and `en-US`; a namespace missing
-// them refuses to register and every label degrades to its raw key.
-        ctx.effect(
-          () =>
-            locale.register(NS, {
-              'zh-CN': DICT.zh,
-              'en-US': DICT.en,
-              zh: DICT.zh,
-              en: DICT.en,
-            }),
-          'image-canvas: locale',
-        )
+          // Register plain `zh` / `en`, the shape every other DSH plugin uses.
+          // An earlier version also registered `zh-CN` / `en-US`; the resolver
+          // matches the plain language tag, so those extra keys were dead weight
+          // and the extra entry made the lookup fall through to `en`.
+          ctx.effect(() => locale.register(NS, { zh: DICT.zh, en: DICT.en }), 'image-canvas: locale')
         }
         const t = locale === undefined ? (key) => key : locale.bind(NS)
 
