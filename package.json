@@ -1,6 +1,6 @@
 {
   "name": "dsh-image-canvas",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Infinite canvas for AI image work in DeepSeek Harness: text-to-image, image-to-image, upload, crop, preview and generation history.",
   "type": "module",
   "license": "MIT",

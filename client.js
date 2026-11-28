@@ -123,6 +123,8 @@ window.__ModuleLoader__.load({
         'annotate.arrow': '箭头',
         'annotate.square': '方框',
         'annotate.eraser': '橡皮擦',
+        'annotate.text': '文字',
+        'annotate.textPlaceholder': '输入文字，回车确认',
         'annotate.undo': '撤销',
         'annotate.clear': '清空',
         'annotate.size': '粗细',
@@ -264,6 +266,8 @@ window.__ModuleLoader__.load({
         'annotate.arrow': 'Arrow',
         'annotate.square': 'Box',
         'annotate.eraser': 'Eraser',
+        'annotate.text': 'Text',
+        'annotate.textPlaceholder': 'Type a label, press Enter',
         'annotate.undo': 'Undo',
         'annotate.clear': 'Clear',
         'annotate.size': 'Size',
@@ -541,6 +545,7 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
 .icv-annotate-layer{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 .icv-annotate-layer[data-tool="eraser"]{cursor:cell}
 .icv-annotate-bar{display:flex;align-items:center;gap:6px;padding:8px 12px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l1)}
+.icv-annotate-typing{display:flex;align-items:center;gap:6px;padding:8px 12px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
 .icv-annotate-tool{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
 .icv-annotate-tool:hover{background:var(--dsw-alias-bg-layer-2)}
 .icv-annotate-tool[data-active="true"]{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:#fff}
@@ -763,9 +768,19 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
       )
     }
 
-    function Overlay({ label, onClose, children }) {
+    /**
+     * A dialog on top of the page.
+     *
+     * Owns Escape, focus and the Tab loop. `escape` lets the caller stand down
+     * for one keypress while something inside the dialog is itself handling
+     * Escape — a text box being edited, for instance — so the key cancels the
+     * small thing first and only closes the dialog when nothing else claims it.
+     */
+    function Overlay({ label, onClose, children, escape }) {
       const panelRef = useRef(null)
       const previousFocus = useRef(null)
+      const escapeRef = useRef(escape)
+      escapeRef.current = escape
       useEffect(() => {
         previousFocus.current = document.activeElement
         const node = panelRef.current
@@ -774,6 +789,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         node?.focus?.()
         const onKey = (event) => {
           if (event.key === 'Escape') {
+            if (typeof escapeRef.current === 'function' && escapeRef.current()) return
             event.stopPropagation()
             onClose()
             return
@@ -1295,12 +1311,34 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
     }
 
     /**
-     * Paint one stroke onto a 2D context.
+     * Label size in image pixels.
      *
-     * Points are stored normalised (0..1) so a stroke lands in the same place
-     * whatever size the composite ends up being — the overlay canvas is usually
-     * smaller than the source picture.
+     * The stroke width is deliberately thin (a 6 on a 1000px picture is 6px),
+     * which suits a line but would make a label unreadable, so labels use their
+     * own scale off the same slider.
      */
+    function labelFont(item, width) {
+      return Math.max(11, Math.round((item.size * width) / 220))
+    }
+
+    /**
+     * Bounding box of a label in image pixels, for hit testing.
+     *
+     * X scales with the width and Y with the height, matching drawLabel: a
+     * picture that is not square would otherwise put the clickable box
+     * somewhere other than the text.
+     */
+    function labelBox(item, width, height) {
+      const font = labelFont(item, width)
+      return {
+        x: item.x * width,
+        y: item.y * height,
+        w: Math.max(font * 0.8, String(item.text ?? '').length * font * 0.62),
+        h: font * 1.3,
+      }
+    }
+
+    /** Paint one stroke onto a 2D context. */
     function drawStroke(ctx, stroke, width, height) {
       const points = Array.isArray(stroke?.points) ? stroke.points : []
       if (points.length === 0) return
@@ -1326,8 +1364,8 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         ctx.moveTo(first[0], first[1])
         ctx.lineTo(last[0], last[1])
         ctx.stroke()
-        // Arrow head as a filled triangle; rotation is applied by hand so the
-        // same code works for any direction from -PI to PI.
+        // Arrow head as a filled triangle; the angle is applied by hand so the
+        // same code works in every direction from -PI to PI.
         ctx.beginPath()
         ctx.moveTo(last[0], last[1])
         ctx.lineTo(last[0] - head * Math.cos(angle - Math.PI / 7), last[1] - head * Math.sin(angle - Math.PI / 7))
@@ -1353,25 +1391,90 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
     }
 
     /**
-     * Draw on a picture and bake the result into a new asset.
+     * Paint one label.
      *
-     * Strokes live on a transparent canvas above the image, so the source file
-     * is never touched: pressing Done composites both layers into a new PNG and
-     * hands it to the caller, which stores it as a fresh asset.
+     * A dark halo keeps the text readable over both sky and soil, and the
+     * colours are the same six the toolbar offers.
+     */
+    function drawLabel(ctx, item, width, height) {
+      const text = String(item.text ?? '')
+      if (text === '') return
+      const font = labelFont(item, width)
+      ctx.save()
+      ctx.font = `600 ${String(font)}px system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif`
+      ctx.textBaseline = 'top'
+      ctx.lineJoin = 'round'
+      ctx.lineWidth = Math.max(2, font / 7)
+      ctx.strokeStyle = 'rgba(0,0,0,.55)'
+      ctx.strokeText(text, item.x * width, item.y * height)
+      ctx.fillStyle = item.color
+      ctx.fillText(text, item.x * width, item.y * height)
+      ctx.restore()
+    }
+
+    /** One annotated thing: either a stroke or a label. */
+    function drawItem(ctx, item, width, height) {
+      if (item === null || item === undefined) return
+      if (item.kind === 'text') drawLabel(ctx, item, width, height)
+      else drawStroke(ctx, item, width, height)
+    }
+
+    /** True when the point lands on the item, so the eraser can drop it. */
+    function hitsItem(point, item, width, height) {
+      if (item.kind === 'text') {
+        const box = labelBox(item, width, height)
+        const x = point.x * width
+        const y = point.y * height
+        return x >= box.x - 4 && x <= box.x + box.w + 4 && y >= box.y - 4 && y <= box.y + box.h + 4
+      }
+      return distanceToStroke(point, item) <= 0.03
+    }
+
+    /**
+     * Draw on a picture and hand the result back as a new picture.
+     *
+     * Everything here is an operation until Done: items live in React state and
+     * the overlay is repainted from that list every time it changes, so Undo and
+     * Clear always have something real to act on. Done composites the picture
+     * with the item list into a fresh PNG and gives it to the caller, which puts
+     * it on the board as another card — the source picture keeps its pixels.
      */
     function Annotator({ t, node, onClose, onDone }) {
       const imageRef = useRef(null)
       const canvasRef = useRef(null)
+      const inputRef = useRef(null)
       const [tool, setTool] = useState('pen')
       const [color, setColor] = useState('#ff3b30')
       const [size, setSize] = useState(6)
-      const [strokes, setStrokes] = useState([])
+      const [items, setItems] = useState([])
       const [draft, setDraft] = useState(null)
+      /**
+       * The label being typed.
+       *
+       * Kept out of `items` so an empty box never enters the drawing, and so
+       * Escape can throw away an edit without touching what was there before.
+       */
+      const [typing, setTyping] = useState(null)
       const [ready, setReady] = useState(false)
       const [saving, setSaving] = useState(false)
       const [error, setError] = useState('')
+      /**
+       * The in-flight stroke, mirrored into a ref.
+       *
+       * Pointerup can arrive before React re-renders with the new draft. A
+       * handler that trusts the state variable closes over the previous value —
+       * usually `null` — and drops the stroke, which is exactly how the picture
+       * showed marks that the item list never received: Undo and Clear then had
+       * nothing to act on, and Done baked whatever the canvas happened to hold.
+       */
+      const draftRef = useRef(null)
 
-      /** Repaint the overlay from scratch: cheap enough at this stroke count. */
+      /** Focus the text box as soon as it appears. */
+      useEffect(() => {
+        if (typing !== null && inputRef.current !== null) inputRef.current.focus()
+      }, [typing])
+
+      /** Repaint the overlay from the item list. */
       useEffect(() => {
         const canvas = canvasRef.current
         const image = imageRef.current
@@ -1384,16 +1487,30 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         const ctx = canvas.getContext('2d')
         if (ctx === null) return
         ctx.clearRect(0, 0, width, height)
-        const all = draft === null ? strokes : [...strokes, draft]
-        for (const stroke of all) drawStroke(ctx, stroke, width, height)
-      }, [strokes, draft, ready])
+        for (const item of items) {
+          // The label being edited is previewed from the input instead, so its
+          // committed text does not sit under the new text while typing.
+          if (typing !== null && typing.id === item.id) continue
+          drawItem(ctx, item, width, height)
+        }
+        if (draft !== null) drawItem(ctx, draft, width, height)
+        // Live preview: what is in the box is what the picture will get.
+        if (typing !== null && typing.value !== '') {
+          drawLabel(
+            ctx,
+            { kind: 'text', text: typing.value, x: typing.x, y: typing.y, color: typing.color, size: typing.size },
+            width,
+            height,
+          )
+        }
+      }, [items, draft, typing, ready])
 
       /**
        * Catch a picture that finished loading before React attached onLoad.
        *
        * A cached asset completes between the element being created and the
-       * handler being wired, and in that case `load` never fires again: the
-       * Done button would stay disabled on an image that is plainly visible.
+       * handler being wired, and in that case `load` never fires again: Done
+       * would stay disabled on an image that is plainly visible.
        */
       useEffect(() => {
         const image = imageRef.current
@@ -1412,37 +1529,96 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         }
       }
 
-      const begin = (event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        const point = pointOf(event)
-        if (tool === 'eraser') {
-          // The eraser removes whole strokes; partial erase would need a mask.
-          setStrokes((current) => current.filter((stroke) => distanceToStroke(point, stroke) > 0.03))
-          return
+      /** The topmost label under the point, so a typo can be fixed. */
+      const labelAt = (point) => {
+        const image = imageRef.current
+        if (image === null) return undefined
+        const width = image.naturalWidth
+        const height = image.naturalHeight
+        if (width === 0 || height === 0) return undefined
+        for (let index = items.length - 1; index >= 0; index -= 1) {
+          const item = items[index]
+          if (item.kind === 'text' && hitsItem(point, item, width, height)) return item
         }
-        setDraft({ tool, color, size, points: [point] })
+        return undefined
       }
 
-      const move = (event) => {
-        if (draft === null) return
-        const point = pointOf(event)
-        setDraft((current) =>
-          current === null ? current : { ...current, points: [...current.points, point] },
+      const commitTyping = () => {
+        const current = typing
+        if (current === null) return
+        setTyping(null)
+        const value = current.value.trim()
+        if (current.id === undefined) {
+          if (value === '') return
+          setItems((list) => [
+            ...list,
+            { kind: 'text', id: newId('lbl'), x: current.x, y: current.y, text: value, color: current.color, size: current.size },
+          ])
+          return
+        }
+        // Editing an existing label: an empty value deletes it.
+        setItems((list) =>
+          value === ''
+            ? list.filter((entry) => entry.id !== current.id)
+            : list.map((entry) => (entry.id === current.id ? { ...entry, text: value } : entry)),
         )
       }
 
-      const end = () => {
-        if (draft === null) return
-        setStrokes((current) => [...current, draft])
-        setDraft(null)
+      const cancelTyping = () => {
+        if (typing === null) return
+        setTyping(null)
       }
 
-      /** Composite image + overlay into a PNG and hand it back. */
+      const begin = (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        // A click on the picture while typing commits that label first.
+        if (typing !== null) {
+          commitTyping()
+          return
+        }
+        const point = pointOf(event)
+        if (tool === 'text') {
+          const existing = labelAt(point)
+          if (existing !== undefined) {
+            setTyping({ id: existing.id, x: existing.x, y: existing.y, value: existing.text, color: existing.color, size: existing.size })
+            return
+          }
+          setTyping({ x: point.x, y: point.y, value: '', color, size })
+          return
+        }
+        if (tool === 'eraser') {
+          const image = imageRef.current
+          const width = image?.naturalWidth ?? 0
+          const height = image?.naturalHeight ?? 0
+          if (width === 0 || height === 0) return
+          setItems((list) => list.filter((entry) => !hitsItem(point, entry, width, height)))
+          return
+        }
+        const stroke = { kind: 'stroke', tool, color, size, points: [point] }
+        draftRef.current = stroke
+        setDraft(stroke)
+      }
+
+      const move = (event) => {
+        const current = draftRef.current
+        if (current === null) return
+        current.points.push(pointOf(event))
+        setDraft({ ...current, points: current.points.slice() })
+      }
+
+      const end = () => {
+        const current = draftRef.current
+        if (current === null) return
+        draftRef.current = null
+        setDraft(null)
+        setItems((list) => [...list, current])
+      }
+
+      /** Composite picture + items into a PNG and hand it back. */
       const finish = async () => {
         const image = imageRef.current
-        const canvas = canvasRef.current
-        if (image === null || canvas === null || saving) return
+        if (image === null || saving || items.length === 0) return
         setSaving(true)
         setError('')
         try {
@@ -1452,14 +1628,17 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
           const ctx = output.getContext('2d')
           if (ctx === null) throw new Error('canvas unavailable')
           ctx.drawImage(image, 0, 0)
-          ctx.drawImage(canvas, 0, 0)
+          // Redrawn from the item list rather than copied from the on-screen
+          // canvas: the export must not depend on how the preview happened to
+          // be sized when Done was pressed.
+          for (const item of items) drawItem(ctx, item, output.width, output.height)
           const blob = await new Promise((resolve) => output.toBlob(resolve, 'image/png'))
           if (blob === null) throw new Error('encode failed')
           await onDone(blob)
           onClose()
         } catch (caught) {
-          // Keep the dialog open: the strokes are still there, so the user can
-          // simply press Done again instead of losing the work.
+          // Keep the dialog open: the marks are still there, so the user can
+          // press Done again instead of losing the work.
           setError(errText(caught))
         } finally {
           setSaving(false)
@@ -1470,13 +1649,19 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         { id: 'pen', icon: 'pen', label: t('annotate.pen') },
         { id: 'arrow', icon: 'arrow', label: t('annotate.arrow') },
         { id: 'square', icon: 'square', label: t('annotate.square') },
+        { id: 'text', icon: 'text', label: t('annotate.text') },
         { id: 'eraser', icon: 'eraser', label: t('annotate.eraser') },
       ]
       const colors = ['#ff3b30', '#ffcc00', '#34c759', '#0a84ff', '#ffffff', '#000000']
 
       return h(
         Overlay,
-        { label: t('annotate.title'), onClose },
+        {
+          label: t('annotate.title'),
+          onClose,
+          // Escape belongs to the text box while a label is being typed.
+          escape: () => typing !== null,
+        },
         h(
           'div',
           { className: 'icv-modal icv-annotate' },
@@ -1485,6 +1670,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
             { className: 'icv-modal-head' },
             h(Icon, { name: 'pen', size: 14 }),
             h('span', null, t('annotate.title')),
+            items.length === 0 ? null : h('span', { className: 'icv-chip' }, `${String(items.length)}`),
             h('div', { className: 'icv-spacer' }),
             error === '' ? null : h('span', { className: 'icv-chip icv-chip-error' }, error),
             h(IconButton, { name: 'close', title: t('action.close'), onClick: onClose }),
@@ -1494,7 +1680,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
             { className: 'icv-annotate-stage' },
             // The overlay has to be exactly as large as the picture, so both
             // layers share one shrink-to-fit box: a canvas stretched over the
-            // whole stage would offset every stroke by the letterbox margin.
+            // whole stage would offset every mark by the letterbox margin.
             h(
               'div',
               { className: 'icv-annotate-fit' },
@@ -1520,6 +1706,41 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
               }),
             ),
           ),
+          typing === null
+            ? null
+            : h(
+                'div',
+                { className: 'icv-annotate-typing' },
+                h(Icon, { name: 'text', size: 13 }),
+                h('input', {
+                  ref: inputRef,
+                  type: 'text',
+                  className: 'icv-input',
+                  style: { height: '26px', fontSize: '12px', flex: '1 1 240px', minWidth: '160px' },
+                  value: typing.value,
+                  placeholder: t('annotate.textPlaceholder'),
+                  onChange: (event) =>
+                    setTyping((current) => (current === null ? current : { ...current, value: event.target.value })),
+                  onKeyDown: (event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      commitTyping()
+                    } else if (event.key === 'Escape') {
+                      // The dialog's own Escape handler stands down while this
+                      // box is open, so the key cancels the label only.
+                      event.preventDefault()
+                      event.stopPropagation()
+                      cancelTyping()
+                    }
+                  },
+                }),
+                h(
+                  Button,
+                  { small: true, primary: true, disabled: typing.value.trim() === '', onClick: commitTyping },
+                  t('action.apply'),
+                ),
+                h(Button, { small: true, ghost: true, onClick: cancelTyping }, t('action.cancel')),
+              ),
           h(
             'div',
             { className: 'icv-annotate-bar' },
@@ -1567,15 +1788,19 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
             h('div', { className: 'icv-spacer' }),
             h(
               Button,
-              { ghost: true, disabled: strokes.length === 0 || saving, onClick: () => setStrokes((current) => current.slice(0, -1)) },
+              { ghost: true, disabled: items.length === 0 || saving, onClick: () => setItems((current) => current.slice(0, -1)) },
               t('annotate.undo'),
             ),
             h(
               Button,
-              { ghost: true, disabled: strokes.length === 0 || saving, onClick: () => setStrokes([]) },
+              { ghost: true, disabled: items.length === 0 || saving, onClick: () => setItems([]) },
               t('annotate.clear'),
             ),
-            h(Button, { icon: 'check', primary: true, disabled: saving || !ready || strokes.length === 0, onClick: () => void finish() }, t('annotate.done')),
+            h(
+              Button,
+              { icon: 'check', primary: true, disabled: saving || !ready || items.length === 0, onClick: () => void finish() },
+              t('annotate.done'),
+            ),
           ),
         ),
       )
@@ -4066,37 +4291,74 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
       /* ----- crop ----- */
 
       /**
-       * Store a derived copy (crop or annotation) as a new asset.
+       * Put a derived picture on the board as its own card.
        *
-       * The source picture is untouched: the baked PNG becomes a new asset
-       * appended to the card's history and made current. The preview can also
-       * be opened straight from the library, where the target is a bare
-       * `{ id, assetId }` pair with no card behind it — patching that id would
-       * write into a node that does not exist and the result would vanish, so
-       * in that case the copy lands on a fresh card instead.
+       * Draft of the source card, offset to the right so the two are visibly a
+       * pair — the source keeps its pixels and its history untouched, which is
+       * what the annotation editor promises. Opening the preview from the
+       * library has no source card at all, so the copy simply lands where the
+       * viewport is looking.
        */
-      const storeDerived = useCallback(
+      const addDerivedNode = useCallback(
+        (asset, source, extra) => {
+          const point =
+            source === undefined || source === null
+              ? toWorldFromCentre()
+              : { x: source.x + (source.baseWidth ?? IMAGE_WIDTH) + 120, y: source.y }
+          const node = {
+            id: newId('img'),
+            kind: 'asset',
+            x: Math.round(point.x),
+            y: Math.round(point.y),
+            baseWidth: IMAGE_WIDTH,
+            assetId: asset.id,
+            history: [asset.id],
+            width: asset.width || 0,
+            height: asset.height || 0,
+            status: 'ready',
+            error: '',
+            prompt: '',
+            ...extra,
+          }
+          addNode(node)
+          setSelected(node.id)
+          return node
+        },
+        [addNode, toWorldFromCentre],
+      )
+
+      /**
+       * Annotate: always a new card.
+       *
+       * The editor's contract is that drawing is an operation on a copy, so the
+       * result never overwrites the card it came from. A reference edge is
+       * drawn back to the source, which keeps the two visibly related on the
+       * board the way a manual "use as reference" would.
+       */
+      const applyAnnotation = useCallback(
+        async (blob, source) => {
+          const asset = await uploadBlob(blob, 'image/png')
+          const live = docRef.current.nodes.some((entry) => entry.id === source.id)
+          const created = addDerivedNode(asset, live ? source : undefined)
+          if (live) addEdge(source.id, created.id)
+        },
+        [addDerivedNode, addEdge, uploadBlob],
+      )
+
+      /**
+       * Crop: replaces the picture on the card it came from.
+       *
+       * Cropping is a way to trim an existing card, so the trimmed version
+       * becoming current — with the old one kept in the history — is what the
+       * dialog has always done. Opened from the library there is no card to
+       * patch, and the copy gets one of its own rather than vanishing.
+       */
+      const applyCrop = useCallback(
         async (blob, target) => {
           const asset = await uploadBlob(blob, 'image/png')
           const live = docRef.current.nodes.some((entry) => entry.id === target.id)
           if (!live) {
-            const point = toWorldFromCentre()
-            const node = {
-              id: newId('img'),
-              kind: 'asset',
-              x: Math.round(point.x),
-              y: Math.round(point.y),
-              baseWidth: IMAGE_WIDTH,
-              assetId: asset.id,
-              history: [asset.id],
-              width: asset.width || 0,
-              height: asset.height || 0,
-              status: 'ready',
-              error: '',
-              prompt: '',
-            }
-            addNode(node)
-            setSelected(node.id)
+            addDerivedNode(asset, undefined)
             return
           }
           const history = Array.isArray(target.history) ? [...target.history] : []
@@ -4110,10 +4372,8 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
             history,
           })
         },
-        [addNode, patchNode, toWorldFromCentre, uploadBlob],
+        [addDerivedNode, patchNode, uploadBlob],
       )
-
-      /* Crop and annotation both land here: same storage rules, same history. */
 
       /* ----- keyboard ----- */
 
@@ -4597,7 +4857,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
               t,
               onClose: () => setCropTarget(null),
               onApply: async (blob) => {
-                await storeDerived(blob, cropTarget)
+                await applyCrop(blob, cropTarget)
               },
             }),
         annotateTarget === null
@@ -4607,7 +4867,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
               t,
               onClose: () => setAnnotateTarget(null),
               onDone: async (blob) => {
-                await storeDerived(blob, annotateTarget)
+                await applyAnnotation(blob, annotateTarget)
               },
             }),
         libraryOpen

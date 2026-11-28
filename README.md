@@ -45,12 +45,14 @@ board in the main column.
   the node's image; the previous version stays in the node's history and the
   arrows step back through it.
 - **Annotate.** The preview's **Annotate** button opens a drawing layer over the
-  picture: pen, arrow, box and an eraser that removes a whole stroke, plus six
-  colours, a thickness slider, undo and clear. **Done** bakes the strokes into a
-  new PNG at the picture's own resolution and makes it current, so the original
-  stays in the history exactly as with a crop. Strokes are stored as normalised
-  points, so what you draw on screen lands in the same place in the full-size
-  export regardless of how far the preview was zoomed out.
+  picture: pen, arrow, box, **text** and an eraser that removes a whole mark,
+  plus six colours, a thickness slider, undo and clear. Clicking the picture
+  with the text tool drops a label — type, press Enter; click an existing label
+  to edit it, or empty it to delete. Everything you draw is a live operation
+  until you press **Done**, so undo and clear always act on what you see.
+  **Done** bakes the picture and its marks into a new PNG at the picture's own
+  resolution and **adds it to the board as its own card**, linked back to the
+  one it came from; the source keeps its pixels and its history.
 - **Save and export.** Every change is saved about half a second after you stop
   editing. **Save** forces it immediately, **Export** downloads the board as a
   JSON document, and **Import** puts such a document back on the canvas.
