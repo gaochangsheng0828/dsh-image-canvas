@@ -47,9 +47,14 @@ board in the main column.
 - **Annotate.** The preview's **Annotate** button opens a drawing layer over the
   picture: pen, arrow, box, **text** and an eraser that removes a whole mark,
   plus six colours, a thickness slider, undo and clear. Clicking the picture
-  with the text tool drops a label — type, press Enter; click an existing label
-  to edit it, or empty it to delete. Everything you draw is a live operation
-  until you press **Done**, so undo and clear always act on what you see.
+  with the text tool drops a label — type, press Enter. Everything you draw is
+  a live operation until you press **Done**, so undo and clear always act on
+  what you see.
+  **Editing marks:** with a tool armed, clicking a mark of that same kind picks
+  it up and dragging moves it; clicking the picked mark again lets go, and
+  pressing the active tool again leaves edit mode. Double-click a label to
+  change its words, clear its text to delete it, or press Delete while it is
+  picked. A box is picked by its outline, not by its hollow middle.
   **Done** bakes the picture and its marks into a new PNG at the picture's own
   resolution and **adds it to the board as its own card**, linked back to the
   one it came from; the source keeps its pixels and its history.

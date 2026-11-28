@@ -125,6 +125,7 @@ window.__ModuleLoader__.load({
         'annotate.eraser': '橡皮擦',
         'annotate.text': '文字',
         'annotate.textPlaceholder': '输入文字，回车确认',
+        'annotate.moving': '移动中',
         'annotate.undo': '撤销',
         'annotate.clear': '清空',
         'annotate.size': '粗细',
@@ -268,6 +269,7 @@ window.__ModuleLoader__.load({
         'annotate.eraser': 'Eraser',
         'annotate.text': 'Text',
         'annotate.textPlaceholder': 'Type a label, press Enter',
+        'annotate.moving': 'Moving',
         'annotate.undo': 'Undo',
         'annotate.clear': 'Clear',
         'annotate.size': 'Size',
@@ -544,6 +546,8 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
 .icv-annotate-img{display:block;max-width:100%;max-height:62vh;user-select:none;-webkit-user-drag:none}
 .icv-annotate-layer{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 .icv-annotate-layer[data-tool="eraser"]{cursor:cell}
+.icv-annotate-layer[data-selected="true"]{cursor:move}
+.icv-annotate-sel{position:absolute;pointer-events:none;border:1.5px dashed var(--dsw-alias-brand-primary);border-radius:3px;box-shadow:0 0 0 1px rgba(255,255,255,.55)}
 .icv-annotate-bar{display:flex;align-items:center;gap:6px;padding:8px 12px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l1)}
 .icv-annotate-typing{display:flex;align-items:center;gap:6px;padding:8px 12px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
 .icv-annotate-tool{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
@@ -1289,6 +1293,18 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
      * Annotation
      * ------------------------------------------------------------------ */
 
+    /** How close a click has to land, in normalised units, to count as a hit. */
+    const HIT_SLACK = 0.03
+
+    /** Distance from a point to one segment, in normalised units. */
+    function distanceToSegment(point, a, b) {
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const lengthSquared = dx * dx + dy * dy
+      const t = lengthSquared === 0 ? 0 : clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared, 0, 1)
+      return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy))
+    }
+
     /** Shortest distance from a normalised point to a stroke's polyline. */
     function distanceToStroke(point, stroke) {
       const points = stroke?.points ?? []
@@ -1296,15 +1312,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
       if (points.length === 1) return Math.hypot(point.x - points[0].x, point.y - points[0].y)
       let best = Number.POSITIVE_INFINITY
       for (let index = 0; index < points.length - 1; index += 1) {
-        const a = points[index]
-        const b = points[index + 1]
-        const dx = b.x - a.x
-        const dy = b.y - a.y
-        const lengthSquared = dx * dx + dy * dy
-        const t = lengthSquared === 0 ? 0 : clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared, 0, 1)
-        const px = a.x + t * dx
-        const py = a.y + t * dy
-        const distance = Math.hypot(point.x - px, point.y - py)
+        const distance = distanceToSegment(point, points[index], points[index + 1])
         if (distance < best) best = distance
       }
       return best
@@ -1419,7 +1427,13 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
       else drawStroke(ctx, item, width, height)
     }
 
-    /** True when the point lands on the item, so the eraser can drop it. */
+    /**
+     * True when the point lands on the item.
+     *
+     * A box is an outline, not the diagonal between its two corners, so its
+     * four edges are tested — otherwise clicking the visible line missed it and
+     * only the invisible diagonal could be picked up.
+     */
     function hitsItem(point, item, width, height) {
       if (item.kind === 'text') {
         const box = labelBox(item, width, height)
@@ -1427,7 +1441,68 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         const y = point.y * height
         return x >= box.x - 4 && x <= box.x + box.w + 4 && y >= box.y - 4 && y <= box.y + box.h + 4
       }
-      return distanceToStroke(point, item) <= 0.03
+      if (item.tool === 'square') {
+        const points = Array.isArray(item.points) ? item.points : []
+        if (points.length === 0) return false
+        const first = points[0]
+        const last = points[points.length - 1]
+        const corners = [
+          { x: first.x, y: first.y },
+          { x: last.x, y: first.y },
+          { x: last.x, y: last.y },
+          { x: first.x, y: last.y },
+        ]
+        for (let index = 0; index < corners.length; index += 1) {
+          if (distanceToSegment(point, corners[index], corners[(index + 1) % corners.length]) <= HIT_SLACK) return true
+        }
+        return false
+      }
+      return distanceToStroke(point, item) <= HIT_SLACK
+    }
+
+    /**
+     * Extent of an item in normalised coordinates.
+     *
+     * Used for the selection outline and to stop a drag at the picture's edge,
+     * so a shape keeps its proportions instead of squashing against the border.
+     */
+    function itemExtent(item, width, height) {
+      if (item.kind === 'text') {
+        const box = labelBox(item, width, height)
+        return {
+          left: item.x,
+          top: item.y,
+          right: item.x + box.w / Math.max(1, width),
+          bottom: item.y + box.h / Math.max(1, height),
+        }
+      }
+      const points = Array.isArray(item.points) ? item.points : []
+      if (points.length === 0) return { left: 0, top: 0, right: 0, bottom: 0 }
+      let left = 1
+      let top = 1
+      let right = 0
+      let bottom = 0
+      for (const point of points) {
+        if (point.x < left) left = point.x
+        if (point.x > right) right = point.x
+        if (point.y < top) top = point.y
+        if (point.y > bottom) bottom = point.y
+      }
+      return { left, top, right, bottom }
+    }
+
+    /**
+     * Move an item by a delta, clamped so it stays on the picture.
+     *
+     * The whole shape is shifted by one limited offset rather than each point
+     * being clamped on its own, which would deform it at the edges.
+     */
+    function shiftItem(item, dx, dy, width, height) {
+      const extent = itemExtent(item, width, height)
+      const moveX = clamp(dx, -extent.left, 1 - extent.right)
+      const moveY = clamp(dy, -extent.top, 1 - extent.bottom)
+      if (item.kind === 'text') return { ...item, x: item.x + moveX, y: item.y + moveY }
+      return { ...item, points: item.points.map((point) => ({ x: point.x + moveX, y: point.y + moveY })) }
     }
 
     /**
@@ -1438,6 +1513,11 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
      * Clear always have something real to act on. Done composites the picture
      * with the item list into a fresh PNG and gives it to the caller, which puts
      * it on the board as another card — the source picture keeps its pixels.
+     *
+     * Picking and moving: with a tool active, clicking a mark of that same kind
+     * picks it up instead of drawing over it, and dragging moves it. Clicking
+     * the same mark again lets go; clicking the active tool again leaves edit
+     * mode. Text marks open their editor on a double click.
      */
     function Annotator({ t, node, onClose, onDone }) {
       const imageRef = useRef(null)
@@ -1448,6 +1528,8 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
       const [size, setSize] = useState(6)
       const [items, setItems] = useState([])
       const [draft, setDraft] = useState(null)
+      /** The mark the user has picked; null means nothing is armed for moving. */
+      const [selected, setSelected] = useState(null)
       /**
        * The label being typed.
        *
@@ -1468,6 +1550,15 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
        * nothing to act on, and Done baked whatever the canvas happened to hold.
        */
       const draftRef = useRef(null)
+      /** The mark being dragged, with the geometry it had when the drag began. */
+      const dragRef = useRef(null)
+      /** Mirrors for the pointer handlers, which must not read stale state. */
+      const itemsRef = useRef(items)
+      itemsRef.current = items
+      const selectedRef = useRef(selected)
+      selectedRef.current = selected
+      const typingRef = useRef(typing)
+      typingRef.current = typing
 
       /** Focus the text box as soon as it appears. */
       useEffect(() => {
@@ -1518,6 +1609,32 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         if (image.complete && image.naturalWidth > 0) setReady(true)
       }, [])
 
+      /** Delete or Backspace removes the picked mark. */
+      useEffect(() => {
+        const onKey = (event) => {
+          if (typingRef.current !== null || selectedRef.current === null) return
+          const target = event.target
+          const typing =
+            target instanceof HTMLElement &&
+            (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+          if (typing) return
+          if (event.key !== 'Delete' && event.key !== 'Backspace') return
+          event.preventDefault()
+          event.stopPropagation()
+          const id = selectedRef.current
+          setSelected(null)
+          setItems((list) => list.filter((entry) => entry.id !== id))
+        }
+        window.addEventListener('keydown', onKey, true)
+        return () => window.removeEventListener('keydown', onKey, true)
+      }, [])
+
+      /** Natural size of the picture, in image pixels. */
+      const pictureSize = () => {
+        const image = imageRef.current
+        return { width: image?.naturalWidth ?? 0, height: image?.naturalHeight ?? 0 }
+      }
+
       /** Pointer position as a normalised point inside the picture. */
       const pointOf = (event) => {
         const canvas = canvasRef.current
@@ -1529,16 +1646,23 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         }
       }
 
-      /** The topmost label under the point, so a typo can be fixed. */
-      const labelAt = (point) => {
-        const image = imageRef.current
-        if (image === null) return undefined
-        const width = image.naturalWidth
-        const height = image.naturalHeight
+      /**
+       * The topmost mark of the given tool's own kind under the point.
+       *
+       * Kind-matched on purpose: the pen picks up pen strokes, the arrow tool
+       * picks up arrows, and so on, so a tool never grabs something the user
+       * was not aiming at.
+       */
+      const itemAt = (point, wantTool) => {
+        const { width, height } = pictureSize()
         if (width === 0 || height === 0) return undefined
-        for (let index = items.length - 1; index >= 0; index -= 1) {
-          const item = items[index]
-          if (item.kind === 'text' && hitsItem(point, item, width, height)) return item
+        for (let index = itemsRef.current.length - 1; index >= 0; index -= 1) {
+          const item = itemsRef.current[index]
+          const sameKind =
+            wantTool === 'text'
+              ? item.kind === 'text'
+              : item.kind === 'stroke' && item.tool === wantTool
+          if (sameKind && hitsItem(point, item, width, height)) return item
         }
         return undefined
       }
@@ -1550,18 +1674,23 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         const value = current.value.trim()
         if (current.id === undefined) {
           if (value === '') return
+          const id = newId('lbl')
           setItems((list) => [
             ...list,
-            { kind: 'text', id: newId('lbl'), x: current.x, y: current.y, text: value, color: current.color, size: current.size },
+            { kind: 'text', id, x: current.x, y: current.y, text: value, color: current.color, size: current.size },
           ])
+          // A fresh label is picked up straight away, so it can be nudged into
+          // place without hunting for it again.
+          setSelected(id)
           return
         }
         // Editing an existing label: an empty value deletes it.
-        setItems((list) =>
-          value === ''
-            ? list.filter((entry) => entry.id !== current.id)
-            : list.map((entry) => (entry.id === current.id ? { ...entry, text: value } : entry)),
-        )
+        if (value === '') {
+          setSelected((current2) => (current2 === current.id ? null : current2))
+          setItems((list) => list.filter((entry) => entry.id !== current.id))
+          return
+        }
+        setItems((list) => list.map((entry) => (entry.id === current.id ? { ...entry, text: value } : entry)))
       }
 
       const cancelTyping = () => {
@@ -1573,41 +1702,76 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         event.preventDefault()
         event.stopPropagation()
         // A click on the picture while typing commits that label first.
-        if (typing !== null) {
+        if (typingRef.current !== null) {
           commitTyping()
           return
         }
         const point = pointOf(event)
-        if (tool === 'text') {
-          const existing = labelAt(point)
-          if (existing !== undefined) {
-            setTyping({ id: existing.id, x: existing.x, y: existing.y, value: existing.text, color: existing.color, size: existing.size })
-            return
-          }
-          setTyping({ x: point.x, y: point.y, value: '', color, size })
-          return
-        }
+        const { width, height } = pictureSize()
+        if (width === 0 || height === 0) return
+
         if (tool === 'eraser') {
-          const image = imageRef.current
-          const width = image?.naturalWidth ?? 0
-          const height = image?.naturalHeight ?? 0
-          if (width === 0 || height === 0) return
+          setSelected(null)
           setItems((list) => list.filter((entry) => !hitsItem(point, entry, width, height)))
           return
         }
-        const stroke = { kind: 'stroke', tool, color, size, points: [point] }
+
+        // An existing mark of this tool's own kind: pick it up rather than
+        // drawing over it. A second click on the same mark lets go.
+        const hit = itemAt(point, tool)
+        if (hit !== undefined) {
+          const wasSelected = selectedRef.current === hit.id
+          setSelected(hit.id)
+          dragRef.current = { id: hit.id, from: point, origin: hit, moved: false, wasSelected }
+          return
+        }
+
+        // Empty space clears the selection, then the tool does its own job.
+        if (selectedRef.current !== null) setSelected(null)
+
+        if (tool === 'text') {
+          setTyping({ x: point.x, y: point.y, value: '', color, size })
+          return
+        }
+
+        const stroke = { kind: 'stroke', id: newId('str'), tool, color, size, points: [point] }
         draftRef.current = stroke
         setDraft(stroke)
       }
 
       const move = (event) => {
+        const point = pointOf(event)
+
+        const drag = dragRef.current
+        if (drag !== null) {
+          const dx = point.x - drag.from.x
+          const dy = point.y - drag.from.y
+          if (!drag.moved) {
+            // A little slack, so a shaky click does not count as a drag.
+            if (Math.abs(dx) < 0.004 && Math.abs(dy) < 0.004) return
+            drag.moved = true
+          }
+          const { width, height } = pictureSize()
+          const shifted = shiftItem(drag.origin, dx, dy, width, height)
+          const id = drag.id
+          setItems((list) => list.map((entry) => (entry.id === id ? shifted : entry)))
+          return
+        }
+
         const current = draftRef.current
         if (current === null) return
-        current.points.push(pointOf(event))
+        current.points.push(point)
         setDraft({ ...current, points: current.points.slice() })
       }
 
       const end = () => {
+        const drag = dragRef.current
+        if (drag !== null) {
+          dragRef.current = null
+          // A click on an already picked mark releases it; a drag keeps it.
+          if (!drag.moved && drag.wasSelected) setSelected(null)
+          return
+        }
         const current = draftRef.current
         if (current === null) return
         draftRef.current = null
@@ -1615,7 +1779,19 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         setItems((list) => [...list, current])
       }
 
-      /** Composite picture + items into a PNG and hand it back. */
+      /** Double click on a label opens its editor. */
+      const openEditor = (event) => {
+        if (tool !== 'text') return
+        const point = pointOf(event)
+        const hit = itemAt(point, 'text')
+        if (hit === undefined) return
+        event.preventDefault()
+        event.stopPropagation()
+        setSelected(hit.id)
+        setTyping({ id: hit.id, x: hit.x, y: hit.y, value: hit.text, color: hit.color, size: hit.size })
+      }
+
+      /** Composite picture + marks into a PNG and hand it back. */
       const finish = async () => {
         const image = imageRef.current
         if (image === null || saving || items.length === 0) return
@@ -1645,6 +1821,19 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         }
       }
 
+      /**
+       * Arm a tool.
+       *
+       * Picking any tool leaves edit mode: the half-typed label is committed and
+       * nothing stays picked. Pressing the tool that is already active is the
+       * explicit "stop editing" gesture, and lands in the same place.
+       */
+      const chooseTool = (id) => {
+        if (typing !== null) commitTyping()
+        setSelected(null)
+        setTool(id)
+      }
+
       const tools = [
         { id: 'pen', icon: 'pen', label: t('annotate.pen') },
         { id: 'arrow', icon: 'arrow', label: t('annotate.arrow') },
@@ -1654,13 +1843,44 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
       ]
       const colors = ['#ff3b30', '#ffcc00', '#34c759', '#0a84ff', '#ffffff', '#000000']
 
+      /** Where to draw the selection outline, in stage percentages. */
+      const outline = (() => {
+        if (selected === null) return null
+        const item = items.find((entry) => entry.id === selected)
+        if (item === undefined) return null
+        const { width, height } = pictureSize()
+        if (width === 0 || height === 0) return null
+        const extent = itemExtent(item, width, height)
+        // A few pixels of air so a hairline or a dot still shows a box.
+        const padX = 5 / width
+        const padY = 5 / height
+        const left = clamp(extent.left - padX, 0, 1)
+        const top = clamp(extent.top - padY, 0, 1)
+        const right = clamp(extent.right + padX, 0, 1)
+        const bottom = clamp(extent.bottom + padY, 0, 1)
+        return {
+          left: `${String(left * 100)}%`,
+          top: `${String(top * 100)}%`,
+          width: `${String(Math.max(0.4, (right - left) * 100))}%`,
+          height: `${String(Math.max(0.4, (bottom - top) * 100))}%`,
+        }
+      })()
+
       return h(
         Overlay,
         {
           label: t('annotate.title'),
           onClose,
-          // Escape belongs to the text box while a label is being typed.
-          escape: () => typing !== null,
+          // Escape drops the selection or the half-typed label before it
+          // reaches the dialog: only a second press closes the window.
+          escape: () => {
+            if (typing !== null) return true
+            if (selected !== null) {
+              setSelected(null)
+              return true
+            }
+            return false
+          },
         },
         h(
           'div',
@@ -1671,6 +1891,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
             h(Icon, { name: 'pen', size: 14 }),
             h('span', null, t('annotate.title')),
             items.length === 0 ? null : h('span', { className: 'icv-chip' }, `${String(items.length)}`),
+            selected === null ? null : h('span', { className: 'icv-chip icv-chip-ok' }, t('annotate.moving')),
             h('div', { className: 'icv-spacer' }),
             error === '' ? null : h('span', { className: 'icv-chip icv-chip-error' }, error),
             h(IconButton, { name: 'close', title: t('action.close'), onClick: onClose }),
@@ -1696,6 +1917,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
                 ref: canvasRef,
                 className: 'icv-annotate-layer',
                 'data-tool': tool,
+                'data-selected': selected === null ? 'false' : 'true',
                 onPointerDown: (event) => {
                   event.currentTarget.setPointerCapture?.(event.pointerId)
                   begin(event)
@@ -1703,7 +1925,11 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
                 onPointerMove: move,
                 onPointerUp: end,
                 onPointerCancel: end,
+                onDoubleClick: openEditor,
               }),
+              // Selection chrome is HTML, not canvas: it must never end up in
+              // the exported PNG.
+              outline === null ? null : h('div', { className: 'icv-annotate-sel', style: outline }),
             ),
           ),
           typing === null
@@ -1753,7 +1979,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
                   className: 'icv-annotate-tool',
                   'data-active': tool === entry.id ? 'true' : 'false',
                   title: entry.label,
-                  onClick: () => setTool(entry.id),
+                  onClick: () => chooseTool(entry.id),
                 },
                 h(Icon, { name: entry.icon, size: 14 }),
                 h('span', null, entry.label),
@@ -1788,12 +2014,28 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
             h('div', { className: 'icv-spacer' }),
             h(
               Button,
-              { ghost: true, disabled: items.length === 0 || saving, onClick: () => setItems((current) => current.slice(0, -1)) },
+              {
+                ghost: true,
+                disabled: items.length === 0 || saving,
+                onClick: () => {
+                  setSelected(null)
+                  setTyping(null)
+                  setItems((current) => current.slice(0, -1))
+                },
+              },
               t('annotate.undo'),
             ),
             h(
               Button,
-              { ghost: true, disabled: items.length === 0 || saving, onClick: () => setItems([]) },
+              {
+                ghost: true,
+                disabled: items.length === 0 || saving,
+                onClick: () => {
+                  setSelected(null)
+                  setTyping(null)
+                  setItems([])
+                },
+              },
               t('annotate.clear'),
             ),
             h(
