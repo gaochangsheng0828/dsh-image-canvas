@@ -118,6 +118,16 @@ window.__ModuleLoader__.load({
         'preview.reset': '复位',
         'history.label': '生成历史',
       'theme.toDark': '切换到暗色',
+        'annotate.title': '标注',
+        'annotate.pen': '画笔',
+        'annotate.arrow': '箭头',
+        'annotate.square': '方框',
+        'annotate.eraser': '橡皮擦',
+        'annotate.undo': '撤销',
+        'annotate.clear': '清空',
+        'annotate.size': '粗细',
+        'annotate.done': '完成',
+        'annotate.hint': '在图上拖动即可标注，点对号生成新图（原图不变）',
       'theme.toLight': '切换到亮色',
         'history.empty': '还没有生成记录',
         'history.current': '当前',
@@ -249,6 +259,16 @@ window.__ModuleLoader__.load({
         'preview.reset': 'Reset',
         'history.label': 'History',
       'theme.toDark': 'Switch to dark',
+        'annotate.title': 'Annotate',
+        'annotate.pen': 'Pen',
+        'annotate.arrow': 'Arrow',
+        'annotate.square': 'Box',
+        'annotate.eraser': 'Eraser',
+        'annotate.undo': 'Undo',
+        'annotate.clear': 'Clear',
+        'annotate.size': 'Size',
+        'annotate.done': 'Done',
+        'annotate.hint': 'Drag on the picture to annotate, then press Done to bake a copy',
       'theme.toLight': 'Switch to light',
         'history.empty': 'Nothing generated yet',
         'history.current': 'Current',
@@ -514,6 +534,21 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
 .icv-controls-label{flex:none;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .icv-busy-elapsed{font-size:11px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
 .icv-rail{position:absolute;left:0;top:0;bottom:0;width:132px;z-index:6;display:flex;flex-direction:column;border-right:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
+.icv-annotate{width:auto;max-width:min(1100px,95vw);display:flex;flex-direction:column}
+.icv-annotate-stage{position:relative;display:flex;align-items:center;justify-content:center;background:#181818;border-radius:6px;overflow:hidden;margin:10px 12px;min-height:200px}
+.icv-annotate-img{display:block;max-width:100%;max-height:62vh;user-select:none}
+.icv-annotate-layer{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
+.icv-annotate-bar{display:flex;align-items:center;gap:6px;padding:8px 12px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l1)}
+.icv-annotate-tool{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
+.icv-annotate-tool:hover{background:var(--dsw-alias-bg-layer-2)}
+.icv-annotate-tool[data-active="true"]{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:#fff}
+body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-static-neutral-bluish-1000,#141414)}
+.icv-annotate-sep{width:1px;height:18px;background:var(--dsw-alias-border-l1);margin:0 3px}
+.icv-annotate-color{width:20px;height:20px;border-radius:50%;border:2px solid var(--dsw-alias-border-l1);cursor:pointer;padding:0}
+.icv-annotate-color[data-active="true"]{border-color:var(--dsw-alias-brand-primary);transform:scale(1.15)}
+.icv-annotate-size{width:90px;accent-color:var(--dsw-alias-brand-primary)}
+.icv-annotate-hint{font-size:11px;color:var(--dsw-alias-label-secondary)}
+
 .icv-rail-head{display:flex;align-items:center;gap:5px;padding:7px 8px;font-size:11px;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l1)}
 .icv-rail-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:8px}
 .icv-rail-item{position:relative;width:100%;aspect-ratio:1;border-radius:7px;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);cursor:pointer}
@@ -672,6 +707,10 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
       moon: 'M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z',
       collapseLeft: 'M15 5l-7 7 7 7M4 4v16',
       collapseRight: 'M9 5l7 7-7 7M20 4v16',
+      pen: 'M4 20l4-1 9-9a2.1 2.1 0 0 0-3-3l-9 9-1 4zM14.5 6.5l3 3',
+      arrow: 'M5 19 19 5M19 5h-6M19 5v6',
+      square: 'M4 5h16v14H4z',
+      eraser: 'M8 20H5l-2-2 9-9 7 7-4 4H8zM9 9l7 7',
     }
 
     function Icon({ name, size }) {
@@ -1081,7 +1120,7 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
             ),
       )
     }
-    function Lightbox({ node, t, onClose, onCrop, onUseAsReference }) {
+    function Lightbox({ node, t, onClose, onCrop, onUseAsReference, onAnnotate }) {
       const src = assetUrl(node.assetId)
       const viewportRef = useRef(null)
       const [zoom, setZoom] = useState(1)
@@ -1218,6 +1257,7 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
             { className: 'icv-modal-foot' },
             h(Button, { icon: 'save', onClick: download }, t('action.download')),
             h(Button, { icon: 'crop', onClick: () => onCrop(node) }, t('action.crop')),
+            h(Button, { icon: 'pen', onClick: () => onAnnotate(node) }, t('annotate.title')),
             h(Button, { icon: 'link', onClick: () => onUseAsReference(node) }, t('action.asReference')),
             h('div', { className: 'icv-spacer' }),
             h('span', { className: 'icv-mono' }, t('preview.zoomHint')),
@@ -3177,6 +3217,8 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
       const [selected, setSelected] = useState(null)
       const [preview, setPreview] = useState(null)
       const [cropTarget, setCropTarget] = useState(null)
+      /** The picture being annotated; null closes the editor. */
+      const [annotateTarget, setAnnotateTarget] = useState(null)
       const [expandedNode, setExpandedNode] = useState(null)
       const [addMenu, setAddMenu] = useState(null)
       const [imageMenu, setImageMenu] = useState(null)
@@ -3213,7 +3255,7 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
       const uploadOrigin = useRef(null)
 
       const modalOpen =
-        preview !== null || cropTarget !== null || expandedNode !== null || settingsOpen || libraryOpen || pendingDelete !== null || imageMenu !== null
+        preview !== null || cropTarget !== null || annotateTarget !== null || expandedNode !== null || settingsOpen || libraryOpen || pendingDelete !== null || imageMenu !== null
 
       /**
        * The document as it should be stored.
@@ -4004,6 +4046,29 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
 
       /* ----- crop ----- */
 
+      /**
+       * Store an annotated copy.
+       *
+       * The source picture is untouched: the baked PNG becomes a new asset
+       * appended to the card's history and made current, exactly like a crop.
+       */
+      const applyAnnotation = useCallback(
+        async (blob, target) => {
+          const asset = await uploadBlob(blob, 'image/png')
+          const history = Array.isArray(target.history) ? [...target.history] : []
+          if (!history.includes(asset.id)) history.push(asset.id)
+          patchNode(target.id, {
+            assetId: asset.id,
+            width: asset.width || target.width || 0,
+            height: asset.height || target.height || 0,
+            status: 'ready',
+            error: '',
+            history,
+          })
+        },
+        [patchNode, uploadBlob],
+      )
+
       const applyCrop = useCallback(
         async (blob, target) => {
           const asset = await uploadBlob(blob, 'image/png')
@@ -4491,6 +4556,10 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
                 setCropTarget(node)
               },
               onUseAsReference: useAsReference,
+              onAnnotate: (node) => {
+                setPreview(null)
+                setAnnotateTarget(node)
+              },
             }),
         cropTarget === null
           ? null
@@ -4500,6 +4569,16 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
               onClose: () => setCropTarget(null),
               onApply: async (blob) => {
                 await applyCrop(blob, cropTarget)
+              },
+            }),
+        annotateTarget === null
+          ? null
+          : h(Annotator, {
+              node: annotateTarget,
+              t,
+              onClose: () => setAnnotateTarget(null),
+              onDone: async (blob) => {
+                await applyAnnotation(blob, annotateTarget)
               },
             }),
         libraryOpen
