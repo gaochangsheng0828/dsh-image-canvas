@@ -1228,6 +1228,301 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
     }
 
     /* ------------------------------------------------------------------ *
+     * Annotation
+     * ------------------------------------------------------------------ */
+
+    /** Shortest distance from a normalised point to a stroke's polyline. */
+    function distanceToStroke(point, stroke) {
+      const points = stroke?.points ?? []
+      if (points.length === 0) return Number.POSITIVE_INFINITY
+      if (points.length === 1) return Math.hypot(point.x - points[0].x, point.y - points[0].y)
+      let best = Number.POSITIVE_INFINITY
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const a = points[index]
+        const b = points[index + 1]
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const lengthSquared = dx * dx + dy * dy
+        const t = lengthSquared === 0 ? 0 : clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared, 0, 1)
+        const px = a.x + t * dx
+        const py = a.y + t * dy
+        const distance = Math.hypot(point.x - px, point.y - py)
+        if (distance < best) best = distance
+      }
+      return best
+    }
+
+    /**
+     * Paint one stroke onto a 2D context.
+     *
+     * Points are stored normalised (0..1) so a stroke lands in the same place
+     * whatever size the composite ends up being — the overlay canvas is usually
+     * smaller than the source picture.
+     */
+    function drawStroke(ctx, stroke, width, height) {
+      const points = Array.isArray(stroke?.points) ? stroke.points : []
+      if (points.length === 0) return
+      const lineWidth = Math.max(1, (stroke.size / 1000) * width)
+      ctx.save()
+      ctx.strokeStyle = stroke.color
+      ctx.fillStyle = stroke.color
+      ctx.lineWidth = lineWidth
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      const at = (point) => [point.x * width, point.y * height]
+
+      if (stroke.tool === 'square') {
+        const first = at(points[0])
+        const last = at(points[points.length - 1])
+        ctx.strokeRect(first[0], first[1], last[0] - first[0], last[1] - first[1])
+      } else if (stroke.tool === 'arrow') {
+        const first = at(points[0])
+        const last = at(points[points.length - 1])
+        const head = Math.max(8, lineWidth * 3.4)
+        const angle = Math.atan2(last[1] - first[1], last[0] - first[0])
+        ctx.beginPath()
+        ctx.moveTo(first[0], first[1])
+        ctx.lineTo(last[0], last[1])
+        ctx.stroke()
+        // Arrow head as a filled triangle; rotation is applied by hand so the
+        // same code works for any direction from -PI to PI.
+        ctx.beginPath()
+        ctx.moveTo(last[0], last[1])
+        ctx.lineTo(last[0] - head * Math.cos(angle - Math.PI / 7), last[1] - head * Math.sin(angle - Math.PI / 7))
+        ctx.lineTo(last[0] - head * Math.cos(angle + Math.PI / 7), last[1] - head * Math.sin(angle + Math.PI / 7))
+        ctx.closePath()
+        ctx.fill()
+      } else {
+        ctx.beginPath()
+        points.forEach((point, index) => {
+          const [x, y] = at(point)
+          if (index === 0) ctx.moveTo(x, y)
+          else ctx.lineTo(x, y)
+        })
+        if (points.length === 1) {
+          const [x, y] = at(points[0])
+          ctx.arc(x, y, lineWidth / 2, 0, Math.PI * 2)
+          ctx.fill()
+        } else {
+          ctx.stroke()
+        }
+      }
+      ctx.restore()
+    }
+
+    /**
+     * Draw on a picture and bake the result into a new asset.
+     *
+     * Strokes live on a transparent canvas above the image, so the source file
+     * is never touched: pressing Done composites both layers into a new PNG and
+     * hands it to the caller, which stores it as a fresh asset.
+     */
+    function Annotator({ t, node, onClose, onDone }) {
+      const imageRef = useRef(null)
+      const canvasRef = useRef(null)
+      const [tool, setTool] = useState('pen')
+      const [color, setColor] = useState('#ff3b30')
+      const [size, setSize] = useState(6)
+      const [strokes, setStrokes] = useState([])
+      const [draft, setDraft] = useState(null)
+      const [ready, setReady] = useState(false)
+      const [saving, setSaving] = useState(false)
+
+      /** North of the modal: Escape closes, unless a drag is in progress. */
+      useEffect(() => {
+        const onKey = (event) => {
+          if (event.key !== 'Escape' || draft !== null) return
+          event.stopPropagation()
+          onClose()
+        }
+        window.addEventListener('keydown', onKey, true)
+        return () => window.removeEventListener('keydown', onKey, true)
+      }, [draft, onClose])
+
+      /** Repaint the overlay from scratch: cheap enough at this stroke count. */
+      useEffect(() => {
+        const canvas = canvasRef.current
+        const image = imageRef.current
+        if (canvas === null || image === null) return
+        const width = image.naturalWidth
+        const height = image.naturalHeight
+        if (width === 0 || height === 0) return
+        if (canvas.width !== width) canvas.width = width
+        if (canvas.height !== height) canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (ctx === null) return
+        ctx.clearRect(0, 0, width, height)
+        const all = draft === null ? strokes : [...strokes, draft]
+        for (const stroke of all) drawStroke(ctx, stroke, width, height)
+      }, [strokes, draft, ready])
+
+      /** Pointer position as a normalised point inside the picture. */
+      const pointOf = (event) => {
+        const canvas = canvasRef.current
+        if (canvas === null) return { x: 0, y: 0 }
+        const rect = canvas.getBoundingClientRect()
+        return {
+          x: clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1),
+          y: clamp((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1),
+        }
+      }
+
+      const begin = (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        const point = pointOf(event)
+        if (tool === 'eraser') {
+          // The eraser removes whole strokes; partial erase would need a mask.
+          setStrokes((current) => current.filter((stroke) => distanceToStroke(point, stroke) > 0.03))
+          return
+        }
+        setDraft({ tool, color, size, points: [point] })
+      }
+
+      const move = (event) => {
+        if (draft === null) return
+        const point = pointOf(event)
+        setDraft((current) =>
+          current === null ? current : { ...current, points: [...current.points, point] },
+        )
+      }
+
+      const end = () => {
+        if (draft === null) return
+        setStrokes((current) => [...current, draft])
+        setDraft(null)
+      }
+
+      /** Composite image + overlay into a PNG and hand it back. */
+      const finish = async () => {
+        const image = imageRef.current
+        const canvas = canvasRef.current
+        if (image === null || canvas === null || saving) return
+        setSaving(true)
+        try {
+          const output = document.createElement('canvas')
+          output.width = image.naturalWidth
+          output.height = image.naturalHeight
+          const ctx = output.getContext('2d')
+          if (ctx === null) throw new Error('canvas unavailable')
+          ctx.drawImage(image, 0, 0)
+          ctx.drawImage(canvas, 0, 0)
+          const blob = await new Promise((resolve) => output.toBlob(resolve, 'image/png'))
+          if (blob === null) throw new Error('encode failed')
+          await onDone(blob)
+          onClose()
+        } finally {
+          setSaving(false)
+        }
+      }
+
+      const tools = [
+        { id: 'pen', icon: 'pen', label: t('annotate.pen') },
+        { id: 'arrow', icon: 'arrow', label: t('annotate.arrow') },
+        { id: 'square', icon: 'square', label: t('annotate.square') },
+        { id: 'eraser', icon: 'eraser', label: t('annotate.eraser') },
+      ]
+      const colors = ['#ff3b30', '#ffcc00', '#34c759', '#0a84ff', '#ffffff', '#000000']
+
+      return h(
+        'div',
+        { className: 'icv-overlay', role: 'dialog', 'aria-modal': true, 'aria-label': t('annotate.title') },
+        h(
+          'div',
+          { className: 'icv-modal icv-annotate' },
+          h(
+            'div',
+            { className: 'icv-modal-head' },
+            h(Icon, { name: 'pen', size: 14 }),
+            h('span', null, t('annotate.title')),
+            h('div', { className: 'icv-spacer' }),
+            h(IconButton, { name: 'close', title: t('action.close'), onClick: onClose }),
+          ),
+          h(
+            'div',
+            { className: 'icv-annotate-stage' },
+            h('img', {
+              ref: imageRef,
+              src: assetUrl(node.assetId),
+              alt: '',
+              draggable: false,
+              onLoad: () => setReady(true),
+              className: 'icv-annotate-img',
+            }),
+            h('canvas', {
+              ref: canvasRef,
+              className: 'icv-annotate-layer',
+              onPointerDown: (event) => {
+                event.currentTarget.setPointerCapture?.(event.pointerId)
+                begin(event)
+              },
+              onPointerMove: move,
+              onPointerUp: end,
+              onPointerCancel: end,
+            }),
+          ),
+          h(
+            'div',
+            { className: 'icv-annotate-bar' },
+            ...tools.map((entry) =>
+              h(
+                'button',
+                {
+                  key: entry.id,
+                  type: 'button',
+                  className: 'icv-annotate-tool',
+                  'data-active': tool === entry.id ? 'true' : 'false',
+                  title: entry.label,
+                  onClick: () => setTool(entry.id),
+                },
+                h(Icon, { name: entry.icon, size: 14 }),
+                h('span', null, entry.label),
+              ),
+            ),
+            h('span', { className: 'icv-annotate-sep' }),
+            ...colors.map((value) =>
+              h('button', {
+                key: value,
+                type: 'button',
+                className: 'icv-annotate-color',
+                'data-active': color === value ? 'true' : 'false',
+                style: { background: value },
+                title: value,
+                onClick: () => setColor(value),
+              }),
+            ),
+            h('input', {
+              type: 'range',
+              min: '2',
+              max: '24',
+              value: String(size),
+              className: 'icv-annotate-size',
+              title: t('annotate.size'),
+              onChange: (event) => setSize(Number(event.target.value)),
+            }),
+          ),
+          h(
+            'div',
+            { className: 'icv-modal-foot' },
+            h('span', { className: 'icv-annotate-hint' }, t('annotate.hint')),
+            h('div', { className: 'icv-spacer' }),
+            h(
+              Button,
+              { ghost: true, disabled: strokes.length === 0 || saving, onClick: () => setStrokes((current) => current.slice(0, -1)) },
+              t('annotate.undo'),
+            ),
+            h(
+              Button,
+              { ghost: true, disabled: strokes.length === 0 || saving, onClick: () => setStrokes([]) },
+              t('annotate.clear'),
+            ),
+            h(Button, { icon: 'check', primary: true, disabled: saving || !ready, onClick: () => void finish() }, t('annotate.done')),
+          ),
+        ),
+      )
+    }
+
+    /* ------------------------------------------------------------------ *
      * Cropper
      * ------------------------------------------------------------------ */
 
