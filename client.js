@@ -536,8 +536,10 @@ body[data-ds-dark-theme] .icv-btn-primary{color:var(--dsw-static-neutral-bluish-
 .icv-rail{position:absolute;left:0;top:0;bottom:0;width:132px;z-index:6;display:flex;flex-direction:column;border-right:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
 .icv-annotate{width:auto;max-width:min(1100px,95vw);display:flex;flex-direction:column}
 .icv-annotate-stage{position:relative;display:flex;align-items:center;justify-content:center;background:#181818;border-radius:6px;overflow:hidden;margin:10px 12px;min-height:200px}
-.icv-annotate-img{display:block;max-width:100%;max-height:62vh;user-select:none}
+.icv-annotate-fit{position:relative;display:inline-block;line-height:0;max-width:100%}
+.icv-annotate-img{display:block;max-width:100%;max-height:62vh;user-select:none;-webkit-user-drag:none}
 .icv-annotate-layer{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
+.icv-annotate-layer[data-tool="eraser"]{cursor:cell}
 .icv-annotate-bar{display:flex;align-items:center;gap:6px;padding:8px 12px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l1)}
 .icv-annotate-tool{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
 .icv-annotate-tool:hover{background:var(--dsw-alias-bg-layer-2)}
@@ -1367,17 +1369,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
       const [draft, setDraft] = useState(null)
       const [ready, setReady] = useState(false)
       const [saving, setSaving] = useState(false)
-
-      /** North of the modal: Escape closes, unless a drag is in progress. */
-      useEffect(() => {
-        const onKey = (event) => {
-          if (event.key !== 'Escape' || draft !== null) return
-          event.stopPropagation()
-          onClose()
-        }
-        window.addEventListener('keydown', onKey, true)
-        return () => window.removeEventListener('keydown', onKey, true)
-      }, [draft, onClose])
+      const [error, setError] = useState('')
 
       /** Repaint the overlay from scratch: cheap enough at this stroke count. */
       useEffect(() => {
@@ -1395,6 +1387,19 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         const all = draft === null ? strokes : [...strokes, draft]
         for (const stroke of all) drawStroke(ctx, stroke, width, height)
       }, [strokes, draft, ready])
+
+      /**
+       * Catch a picture that finished loading before React attached onLoad.
+       *
+       * A cached asset completes between the element being created and the
+       * handler being wired, and in that case `load` never fires again: the
+       * Done button would stay disabled on an image that is plainly visible.
+       */
+      useEffect(() => {
+        const image = imageRef.current
+        if (image === null) return
+        if (image.complete && image.naturalWidth > 0) setReady(true)
+      }, [])
 
       /** Pointer position as a normalised point inside the picture. */
       const pointOf = (event) => {
@@ -1439,6 +1444,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
         const canvas = canvasRef.current
         if (image === null || canvas === null || saving) return
         setSaving(true)
+        setError('')
         try {
           const output = document.createElement('canvas')
           output.width = image.naturalWidth
@@ -1451,6 +1457,10 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
           if (blob === null) throw new Error('encode failed')
           await onDone(blob)
           onClose()
+        } catch (caught) {
+          // Keep the dialog open: the strokes are still there, so the user can
+          // simply press Done again instead of losing the work.
+          setError(errText(caught))
         } finally {
           setSaving(false)
         }
@@ -1465,8 +1475,8 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
       const colors = ['#ff3b30', '#ffcc00', '#34c759', '#0a84ff', '#ffffff', '#000000']
 
       return h(
-        'div',
-        { className: 'icv-overlay', role: 'dialog', 'aria-modal': true, 'aria-label': t('annotate.title') },
+        Overlay,
+        { label: t('annotate.title'), onClose },
         h(
           'div',
           { className: 'icv-modal icv-annotate' },
@@ -1476,30 +1486,39 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
             h(Icon, { name: 'pen', size: 14 }),
             h('span', null, t('annotate.title')),
             h('div', { className: 'icv-spacer' }),
+            error === '' ? null : h('span', { className: 'icv-chip icv-chip-error' }, error),
             h(IconButton, { name: 'close', title: t('action.close'), onClick: onClose }),
           ),
           h(
             'div',
             { className: 'icv-annotate-stage' },
-            h('img', {
-              ref: imageRef,
-              src: assetUrl(node.assetId),
-              alt: '',
-              draggable: false,
-              onLoad: () => setReady(true),
-              className: 'icv-annotate-img',
-            }),
-            h('canvas', {
-              ref: canvasRef,
-              className: 'icv-annotate-layer',
-              onPointerDown: (event) => {
-                event.currentTarget.setPointerCapture?.(event.pointerId)
-                begin(event)
-              },
-              onPointerMove: move,
-              onPointerUp: end,
-              onPointerCancel: end,
-            }),
+            // The overlay has to be exactly as large as the picture, so both
+            // layers share one shrink-to-fit box: a canvas stretched over the
+            // whole stage would offset every stroke by the letterbox margin.
+            h(
+              'div',
+              { className: 'icv-annotate-fit' },
+              h('img', {
+                ref: imageRef,
+                src: assetUrl(node.assetId),
+                alt: '',
+                draggable: false,
+                onLoad: () => setReady(true),
+                className: 'icv-annotate-img',
+              }),
+              h('canvas', {
+                ref: canvasRef,
+                className: 'icv-annotate-layer',
+                'data-tool': tool,
+                onPointerDown: (event) => {
+                  event.currentTarget.setPointerCapture?.(event.pointerId)
+                  begin(event)
+                },
+                onPointerMove: move,
+                onPointerUp: end,
+                onPointerCancel: end,
+              }),
+            ),
           ),
           h(
             'div',
@@ -1544,7 +1563,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
           h(
             'div',
             { className: 'icv-modal-foot' },
-            h('span', { className: 'icv-annotate-hint' }, t('annotate.hint')),
+            h('span', { className: 'icv-annotate-hint' }, saving ? t('status.saving') : t('annotate.hint')),
             h('div', { className: 'icv-spacer' }),
             h(
               Button,
@@ -1556,7 +1575,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
               { ghost: true, disabled: strokes.length === 0 || saving, onClick: () => setStrokes([]) },
               t('annotate.clear'),
             ),
-            h(Button, { icon: 'check', primary: true, disabled: saving || !ready, onClick: () => void finish() }, t('annotate.done')),
+            h(Button, { icon: 'check', primary: true, disabled: saving || !ready || strokes.length === 0, onClick: () => void finish() }, t('annotate.done')),
           ),
         ),
       )
@@ -4047,14 +4066,39 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
       /* ----- crop ----- */
 
       /**
-       * Store an annotated copy.
+       * Store a derived copy (crop or annotation) as a new asset.
        *
        * The source picture is untouched: the baked PNG becomes a new asset
-       * appended to the card's history and made current, exactly like a crop.
+       * appended to the card's history and made current. The preview can also
+       * be opened straight from the library, where the target is a bare
+       * `{ id, assetId }` pair with no card behind it — patching that id would
+       * write into a node that does not exist and the result would vanish, so
+       * in that case the copy lands on a fresh card instead.
        */
-      const applyAnnotation = useCallback(
+      const storeDerived = useCallback(
         async (blob, target) => {
           const asset = await uploadBlob(blob, 'image/png')
+          const live = docRef.current.nodes.some((entry) => entry.id === target.id)
+          if (!live) {
+            const point = toWorldFromCentre()
+            const node = {
+              id: newId('img'),
+              kind: 'asset',
+              x: Math.round(point.x),
+              y: Math.round(point.y),
+              baseWidth: IMAGE_WIDTH,
+              assetId: asset.id,
+              history: [asset.id],
+              width: asset.width || 0,
+              height: asset.height || 0,
+              status: 'ready',
+              error: '',
+              prompt: '',
+            }
+            addNode(node)
+            setSelected(node.id)
+            return
+          }
           const history = Array.isArray(target.history) ? [...target.history] : []
           if (!history.includes(asset.id)) history.push(asset.id)
           patchNode(target.id, {
@@ -4066,25 +4110,10 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
             history,
           })
         },
-        [patchNode, uploadBlob],
+        [addNode, patchNode, toWorldFromCentre, uploadBlob],
       )
 
-      const applyCrop = useCallback(
-        async (blob, target) => {
-          const asset = await uploadBlob(blob, 'image/png')
-          const history = Array.isArray(target.history) ? [...target.history] : []
-          if (!history.includes(asset.id)) history.push(asset.id)
-          patchNode(target.id, {
-            assetId: asset.id,
-            width: asset.width || target.width || 0,
-            height: asset.height || target.height || 0,
-            status: 'ready',
-            error: '',
-            history,
-          })
-        },
-        [patchNode, uploadBlob],
-      )
+      /* Crop and annotation both land here: same storage rules, same history. */
 
       /* ----- keyboard ----- */
 
@@ -4568,7 +4597,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
               t,
               onClose: () => setCropTarget(null),
               onApply: async (blob) => {
-                await applyCrop(blob, cropTarget)
+                await storeDerived(blob, cropTarget)
               },
             }),
         annotateTarget === null
@@ -4578,7 +4607,7 @@ body[data-ds-dark-theme] .icv-annotate-tool[data-active="true"]{color:var(--dsw-
               t,
               onClose: () => setAnnotateTarget(null),
               onDone: async (blob) => {
-                await applyAnnotation(blob, annotateTarget)
+                await storeDerived(blob, annotateTarget)
               },
             }),
         libraryOpen

@@ -39,11 +39,18 @@ board in the main column.
   canvas, or paste with Ctrl+V. Files are stored by their SHA-256 content
   address, so the same picture is kept once.
 - **Preview.** Double-click an image node, or press the preview button, to open it
-  full size with download, crop and "use as reference" actions.
+  full size with download, crop, annotate and "use as reference" actions.
 - **Crop.** The crop dialog draws a drag-and-resize rectangle over the image with
   optional ratio presets (1:1, 4:3, 16:9, 9:16 and others). Applying it replaces
   the node's image; the previous version stays in the node's history and the
   arrows step back through it.
+- **Annotate.** The preview's **Annotate** button opens a drawing layer over the
+  picture: pen, arrow, box and an eraser that removes a whole stroke, plus six
+  colours, a thickness slider, undo and clear. **Done** bakes the strokes into a
+  new PNG at the picture's own resolution and makes it current, so the original
+  stays in the history exactly as with a crop. Strokes are stored as normalised
+  points, so what you draw on screen lands in the same place in the full-size
+  export regardless of how far the preview was zoomed out.
 - **Save and export.** Every change is saved about half a second after you stop
   editing. **Save** forces it immediately, **Export** downloads the board as a
   JSON document, and **Import** puts such a document back on the canvas.
